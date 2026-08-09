@@ -2103,5 +2103,9 @@ function LegendChip({ color, label }) {
   );
 }
 
+const rootEl = document.getElementById("root");
+ReactDOM.createRoot(rootEl).render(<BudgetVoronoi />);
+const boot = document.getElementById("boot");
+if (boot) boot.remove();
 </script>
 </html>
