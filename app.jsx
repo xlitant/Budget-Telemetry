@@ -1,0 +1,1959 @@
+const { useState, useEffect, useMemo, useRef } = React;
+
+
+// Inline replacements for the lucide-react icons used in the app.
+function Settings({ size = 18, strokeWidth = 1.75 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+    </svg>
+  );
+}
+
+function X({ size = 18 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="18" y1="6" x2="6" y2="18" />
+      <line x1="6" y1="6" x2="18" y2="18" />
+    </svg>
+  );
+}
+
+
+// ============================================================
+// 2026 Ontario + federal tax engine
+// ============================================================
+
+const FED_BRACKETS = [
+  { upto: 58523, rate: 0.14 },
+  { upto: 117045, rate: 0.205 },
+  { upto: 181440, rate: 0.26 },
+  { upto: 258482, rate: 0.29 },
+  { upto: Infinity, rate: 0.33 },
+];
+const FED_BPA = 16452;
+
+const ON_BRACKETS = [
+  { upto: 52886, rate: 0.0505 },
+  { upto: 105775, rate: 0.0915 },
+  { upto: 150000, rate: 0.1116 },
+  { upto: 220000, rate: 0.1216 },
+  { upto: Infinity, rate: 0.1316 },
+];
+const ON_BPA = 12989;
+const ON_SURTAX_T1 = 5554;
+const ON_SURTAX_T2 = 7108;
+
+const CPP_EXEMPTION = 3500;
+const CPP_YMPE = 74600;
+const CPP2_CEILING = 85000;
+const CPP_RATE = 0.0595;
+const CPP2_RATE = 0.04;
+
+const EI_MAX_INSURABLE = 68900;
+const EI_RATE = 0.0163;
+
+function progressiveTax(income, brackets) {
+  let tax = 0;
+  let prev = 0;
+  for (const b of brackets) {
+    if (income <= prev) break;
+    tax += (Math.min(income, b.upto) - prev) * b.rate;
+    prev = b.upto;
+  }
+  return tax;
+}
+
+function ontarioHealthPremium(income) {
+  if (income <= 20000) return 0;
+  if (income <= 25000) return Math.min(300, 0.06 * (income - 20000));
+  if (income <= 36000) return 300;
+  if (income <= 38500) return 300 + Math.min(150, 0.06 * (income - 36000));
+  if (income <= 48000) return 450;
+  if (income <= 48600) return 450 + Math.min(150, 0.25 * (income - 48000));
+  if (income <= 72000) return 600;
+  if (income <= 72600) return 600 + Math.min(150, 0.25 * (income - 72000));
+  if (income <= 200000) return 750;
+  if (income <= 200600) return 750 + Math.min(150, 0.25 * (income - 200000));
+  return 900;
+}
+
+function calcNet(gross) {
+  const fedTax = Math.max(0, progressiveTax(gross, FED_BRACKETS) - FED_BPA * 0.14);
+  const onBaseTax = Math.max(0, progressiveTax(gross, ON_BRACKETS) - ON_BPA * 0.0505);
+  let surtax = 0;
+  if (onBaseTax > ON_SURTAX_T1) surtax += 0.2 * (onBaseTax - ON_SURTAX_T1);
+  if (onBaseTax > ON_SURTAX_T2) surtax += 0.36 * (onBaseTax - ON_SURTAX_T2);
+  const onTax = onBaseTax + surtax + ontarioHealthPremium(gross);
+  const cpp1 = CPP_RATE * Math.max(0, Math.min(gross, CPP_YMPE) - CPP_EXEMPTION);
+  const cpp2 = CPP2_RATE * Math.max(0, Math.min(gross, CPP2_CEILING) - CPP_YMPE);
+  const ei = EI_RATE * Math.min(gross, EI_MAX_INSURABLE);
+  const totalDeductions = fedTax + onTax + cpp1 + cpp2 + ei;
+  const annualNet = gross - totalDeductions;
+  return { annualNet, monthlyNet: annualNet / 12, annualTax: totalDeductions };
+}
+
+// ============================================================
+// Budget categories
+// ============================================================
+
+const STATIC_CATEGORIES = [
+  { name: "Groceries", value: 440, avg: 470 },
+  { name: "Hobbies & entertainment", value: 250, avg: 200 },
+  { name: "Clothing & personal care", value: 180, avg: 195 },
+  { name: "Parking", value: 100, avg: 150 },
+  { name: "Utilities (hydro/internet)", value: 100, avg: 160 },
+  { name: "Phone", value: 90, avg: 75 },
+  { name: "Household bills", value: 83, avg: 105 },
+  { name: "Dining out", value: 75, avg: 250 },
+  { name: "Beers/drinks out", value: 250, avg: 150 },
+  { name: "Gym", value: 75, avg: 80 },
+];
+
+const RENT_AVG = 1470;
+const VEHICLE_AVG = 686;
+const LEFTOVER_NAME = "Leftover / savings";
+
+function computeBaseCategories(grossSalary) {
+  const { monthlyNet } = calcNet(grossSalary);
+  const householdMonthlyNet = monthlyNet * 2;
+  const rentBase = (householdMonthlyNet * 0.3) / 2;
+  const vehicleBase = (householdMonthlyNet * 0.1) / 2;
+
+  return [
+    { name: "Rent (30% cap)", base: rentBase, avg: RENT_AVG },
+    ...STATIC_CATEGORIES.map((c) => ({ name: c.name, base: c.value, avg: c.avg })),
+    { name: "Vehicle (your half)", base: vehicleBase, avg: VEHICLE_AVG },
+  ];
+}
+
+const BASELINE_SALARY = 80000;
+// The leftover/savings benchmark is expressed as a savings RATE (not a fixed dollar
+// figure), derived once from the $80,000 baseline scenario with no overrides applied.
+// This keeps the comparison meaningful at every income level and independent of
+// whatever the person has dragged the per-category sliders to.
+const AVG_SAVINGS_RATE = (() => {
+  const monthlyNetBase = calcNet(BASELINE_SALARY).monthlyNet;
+  const baseCats = computeBaseCategories(BASELINE_SALARY);
+  const avgExpenseTotal = baseCats.reduce((s, d) => s + d.avg, 0);
+  return (monthlyNetBase - avgExpenseTotal) / monthlyNetBase;
+})();
+
+function buildBudget(grossSalary, overrides) {
+  const { monthlyNet, annualTax } = calcNet(grossSalary);
+  const baseCats = computeBaseCategories(grossSalary);
+
+  const categories = baseCats.map((c) => {
+    const max = c.base * 2;
+    const override = overrides ? overrides[c.name] : undefined;
+    const value = override === undefined ? c.base : Math.min(Math.max(override, 0), max);
+    return { name: c.name, value, avg: c.avg, base: c.base, max };
+  });
+
+  const expenseTotal = categories.reduce((s, d) => s + d.value, 0);
+  const avgExpenseTotal = categories.reduce((s, d) => s + d.avg, 0);
+  const leftover = monthlyNet - expenseTotal;
+  const scaledAvgLeftover = monthlyNet * AVG_SAVINGS_RATE;
+  categories.push({ name: LEFTOVER_NAME, value: leftover, avg: scaledAvgLeftover, base: null, max: null });
+
+  return {
+    categories,
+    monthlyNet,
+    expenseTotal,
+    avgExpenseTotal,
+    leftover,
+    annualTax,
+    effectiveRate: annualTax / grossSalary,
+  };
+}
+
+// ============================================================
+// Squarified treemap — every tile is a true rectangle, sized exactly
+// to its share of net income, and biased toward square proportions.
+// Category order is fixed, so tiles stay in roughly the same
+// neighbourhood as values change.
+// ============================================================
+
+const WIDTH = 640;
+const HEIGHT = 640;
+const GAP = 3;
+
+function buildTreemap(values) {
+  const root = d3
+    .hierarchy({ children: values.map((v, i) => ({ id: i, value: Math.max(v, 1) })) })
+    .sum((d) => d.value);
+
+  d3.treemap().tile(d3.treemapSquarify).size([WIDTH, HEIGHT]).paddingInner(GAP).round(false)(root);
+
+  const leaves = new Array(values.length);
+  root.leaves().forEach((leaf) => {
+    leaves[leaf.data.id] = { x0: leaf.x0, y0: leaf.y0, x1: leaf.x1, y1: leaf.y1 };
+  });
+  return leaves;
+}
+
+// ============================================================
+// Colors & comparison
+// ============================================================
+
+const GREEN = "#3DFFB0";
+const RED = "#FF5470";
+const NEUTRAL = "#6B7686";
+const ACCENT = "#33D6FF";
+
+function isGood(d) {
+  const delta = d.value - d.avg;
+  if (Math.abs(delta) < Math.abs(d.avg) * 0.03) return null;
+  if (d.name === LEFTOVER_NAME) return delta > 0;
+  return delta < 0;
+}
+function colorFor(d) {
+  const good = isGood(d);
+  if (good === null) return NEUTRAL;
+  return good ? GREEN : RED;
+}
+
+const fmt = (n) => (n < 0 ? `-$${Math.abs(Math.round(n)).toLocaleString()}` : `$${Math.round(n).toLocaleString()}`);
+const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
+
+// Animates an array of numbers toward new targets whenever they change.
+function useAnimatedValues(targets, duration = 550) {
+  const [display, setDisplay] = useState(targets);
+  const fromRef = useRef(targets);
+  const startRef = useRef(null);
+  const rafRef = useRef(null);
+
+  useEffect(() => {
+    fromRef.current = display;
+    startRef.current = null;
+
+    function tick(ts) {
+      if (startRef.current === null) startRef.current = ts;
+      const t = Math.min(1, (ts - startRef.current) / duration);
+      const e = easeOutCubic(t);
+      const next = targets.map((tv, i) => {
+        const fv = fromRef.current[i] ?? tv;
+        return fv + (tv - fv) * e;
+      });
+      setDisplay(next);
+      if (t < 1) {
+        rafRef.current = requestAnimationFrame(tick);
+      }
+    }
+    rafRef.current = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(targets.map((v) => Math.round(v)))]);
+
+  return display;
+}
+
+// Animates a single number toward a new target — used for the counting header figure.
+function useAnimatedNumber(target, duration = 650) {
+  const arr = useAnimatedValues([target], duration);
+  return arr[0];
+}
+
+function BudgetVoronoi() {
+  const [grossSalary, setGrossSalary] = useState(80000);
+  const [overrides, setOverrides] = useState({});
+  const budget = useMemo(() => buildBudget(grossSalary, overrides), [grossSalary, overrides]);
+  const targetValues = useMemo(() => budget.categories.map((d) => d.value), [budget]);
+  const animatedValues = useAnimatedValues(targetValues);
+  const animatedNet = useAnimatedNumber(budget.monthlyNet);
+  const animatedLeftover = useAnimatedNumber(budget.leftover);
+
+  const [hovered, setHovered] = useState(null);
+  const [showInfo, setShowInfo] = useState(false);
+
+  // Tron light-cycle page transition: the rider streaks right off the edge of the
+  // current page, then re-enters from the left on the destination page along the
+  // header line, finishing as the title's underline.
+  const [view, setView] = useState("budget"); // "budget" | "leftover"
+  const [cyclePhase, setCyclePhase] = useState(null); // null | "exit" | "enter"
+  const [cycleOrigin, setCycleOrigin] = useState({ x: 0, y: 0 });
+  const [underlineArmed, setUnderlineArmed] = useState(true);
+  // Measured screen position of whichever underline is currently on-screen, so the
+  // light trail lands exactly on it rather than at a hardcoded guess.
+  const [headerLine, setHeaderLine] = useState({ y: 152, x: 0, w: 560 });
+  const budgetUnderlineRef = useRef(null);
+  const leftoverUnderlineRef = useRef(null);
+
+  const measureUnderline = (targetView) => {
+    const v = targetView ?? view;
+    const el = v === "leftover" ? leftoverUnderlineRef.current : budgetUnderlineRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    // The element may be mid-collapse (scaleX(0)) when measured, which zeroes the
+    // rect width — offsetWidth gives the true unscaled layout width. transformOrigin
+    // is left center, so rect.left and vertical centre stay accurate either way.
+    setHeaderLine({ y: r.top + el.offsetHeight / 2, x: r.left, w: el.offsetWidth });
+  };
+
+  useEffect(() => {
+    measureUnderline();
+    window.addEventListener("resize", measureUnderline);
+    return () => window.removeEventListener("resize", measureUnderline);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view]);
+
+  const runCycleTransition = (e, destination) => {
+    const x = e?.clientX ?? window.innerWidth / 2;
+    const y = e?.clientY ?? window.innerHeight / 2;
+    setCycleOrigin({ x, y });
+    setUnderlineArmed(false);
+    setCyclePhase("exit");
+
+    // While the rider is off-screen, swap the page and scroll to the top so it
+    // re-enters onto the destination header, then zig-zags up into the underline.
+    setTimeout(() => {
+      setView(destination);
+      window.scrollTo({ top: 0, behavior: "auto" });
+      // Let the destination page paint, measure its underline, then send the rider in.
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          measureUnderline(destination);
+          setCyclePhase("enter");
+          setTimeout(() => setUnderlineArmed(true), 640);
+          setTimeout(() => setCyclePhase(null), 1000);
+        });
+      });
+    }, 460);
+  };
+
+  const activateLeftoverPage = (e) => runCycleTransition(e, "leftover");
+  const returnToBudget = (e) => runCycleTransition(e, "budget");
+
+  // "What-if" snapshot: freeze the current numbers, then compare against whatever
+  // the sliders are changed to afterward.
+  const [snapshot, setSnapshot] = useState(null);
+  const takeSnapshot = () =>
+    setSnapshot({
+      grossSalary,
+      monthlyNet: budget.monthlyNet,
+      expenseTotal: budget.expenseTotal,
+      leftover: budget.leftover,
+    });
+  const clearSnapshot = () => setSnapshot(null);
+
+  const setOverride = (name, value) => setOverrides((prev) => ({ ...prev, [name]: value }));
+  const resetOverride = (name) =>
+    setOverrides((prev) => {
+      const next = { ...prev };
+      delete next[name];
+      return next;
+    });
+
+  const nodes = useMemo(() => {
+    const rects = buildTreemap(animatedValues);
+    return budget.categories.map((d, i) => ({
+      ...d,
+      value: animatedValues[i],
+      id: i,
+      color: colorFor(d),
+      rect: rects[i],
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [animatedValues, budget]);
+
+  const orderedCategories = budget.categories; // fixed order, not re-sorted by value
+  const sliderPct = ((grossSalary - 30000) / (200000 - 30000)) * 100;
+
+  return (
+    <div
+      style={{
+        minHeight: "100vh",
+        width: "100%",
+        position: "relative",
+        overflow: "hidden",
+        background: "#05070A",
+        color: "#E7ECF2",
+        fontFamily: "'Sora', -apple-system, sans-serif",
+        padding: "44px 20px 60px",
+        boxSizing: "border-box",
+      }}
+    >
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Sora:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+        * { box-sizing: border-box; }
+        .display { font-family: 'Space Grotesk', sans-serif; }
+        .mono { font-family: 'JetBrains Mono', monospace; }
+        .legend-row { transition: background 0.15s ease, transform 0.15s ease; }
+        .legend-row:hover { background: rgba(51,214,255,0.07); transform: translateX(2px); }
+        .cell-rect { transition: filter 0.18s ease, opacity 0.18s ease; }
+        @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+        .fade-up { animation: fadeUp 0.5s ease both; }
+        @keyframes scanSweep { 0% { transform: translateY(-10%); opacity: 0; } 8% { opacity: 0.5; } 92% { opacity: 0.5; } 100% { transform: translateY(110vh); opacity: 0; } }
+        @keyframes pulseDot { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+        @keyframes cycleExit {
+          0%   { left: var(--ox); opacity: 0; }
+          8%   { opacity: 1; }
+          100% { left: 108vw; opacity: 1; }
+        }
+        @keyframes cycleEnter {
+          0%   { left: -6vw;  top: 82vh; opacity: 0; }
+          6%   { opacity: 1; }
+          18%  { left: 22vw; top: 82vh; }
+          30%  { left: 22vw; top: 58vh; }
+          44%  { left: 52vw; top: 58vh; }
+          56%  { left: 52vw; top: 34vh; }
+          70%  { left: var(--hx); top: 34vh; }
+          80%  { left: var(--hx); top: var(--hy); }
+          96%  { left: calc(var(--hx) + var(--hw)); top: var(--hy); opacity: 1; }
+          100% { left: calc(var(--hx) + var(--hw)); top: var(--hy); opacity: 0; }
+        }
+        @keyframes segDrawX {
+          0%   { transform: scaleX(0); opacity: 0; }
+          5%   { opacity: 1; }
+          100% { transform: scaleX(1); opacity: 1; }
+        }
+        @keyframes segDrawY {
+          0%   { transform: scaleY(0); opacity: 0; }
+          5%   { opacity: 1; }
+          100% { transform: scaleY(1); opacity: 1; }
+        }
+        @keyframes segFade { 0% { opacity: 1; } 100% { opacity: 0; } }
+        @keyframes trailSweep {
+          0%   { transform: scaleX(0); opacity: 0; }
+          8%   { opacity: 1; }
+          100% { transform: scaleX(1); opacity: 1; }
+        }
+        @keyframes trailFade { 0% { opacity: 1; } 100% { opacity: 0; } }
+        @keyframes gridRush {
+          0%   { opacity: 0; }
+          30%  { opacity: 0.6; }
+          100% { opacity: 0; }
+        }
+        @keyframes pageFade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+        .page-fade { animation: pageFade 0.4s ease both; }
+        .salary-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 6px; border-radius: 999px; outline: none; cursor: pointer; }
+        .salary-slider::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 22px; height: 22px; border-radius: 50%; background: #E7ECF2; border: 3px solid ${ACCENT}; box-shadow: 0 2px 8px rgba(0,0,0,0.4); cursor: pointer; margin-top: -8px; }
+        .salary-slider::-moz-range-thumb { width: 22px; height: 22px; border-radius: 50%; background: #E7ECF2; border: 3px solid ${ACCENT}; box-shadow: 0 2px 8px rgba(0,0,0,0.4); cursor: pointer; }
+        .salary-slider::-webkit-slider-runnable-track { height: 6px; border-radius: 999px; }
+        .salary-slider::-moz-range-track { height: 6px; border-radius: 999px; }
+
+        .cat-slider { -webkit-appearance: none; appearance: none; flex: 1; height: 8px; border-radius: 999px; outline: none; cursor: pointer; touch-action: none; }
+        .cat-slider::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 24px; height: 24px; border-radius: 50%; background: #E7ECF2; border: 3px solid var(--thumb-color, ${ACCENT}); box-shadow: 0 1px 6px rgba(0,0,0,0.5); cursor: pointer; margin-top: -8px; }
+        .cat-slider::-moz-range-thumb { width: 24px; height: 24px; border-radius: 50%; background: #E7ECF2; border: 3px solid var(--thumb-color, ${ACCENT}); box-shadow: 0 1px 6px rgba(0,0,0,0.5); cursor: pointer; }
+        .cat-slider::-webkit-slider-runnable-track { height: 8px; border-radius: 999px; }
+        .cat-slider::-moz-range-track { height: 8px; border-radius: 999px; }
+        .reset-btn { min-width: 32px; min-height: 32px; display: flex; align-items: center; justify-content: center; font-size: 15px !important; }
+        .alloc-input {
+          flex: 1;
+          min-width: 0;
+          background: rgba(0,0,0,0.35);
+          border: 1px solid rgba(51,214,255,0.3);
+          border-radius: 2px;
+          color: #E7ECF2;
+          font-size: 13px;
+          font-weight: 600;
+          padding: 7px 9px;
+          outline: none;
+        }
+        .alloc-input:focus { border-color: ${ACCENT}; box-shadow: 0 0 0 2px rgba(51,214,255,0.15); }
+        .alloc-input::-webkit-outer-spin-button, .alloc-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+        .alloc-input[type=number] { -moz-appearance: textfield; }
+      `}</style>
+
+      {/* Fine instrument grid */}
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          backgroundImage:
+            "linear-gradient(rgba(51,214,255,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(51,214,255,0.05) 1px, transparent 1px)",
+          backgroundSize: "36px 36px",
+          pointerEvents: "none",
+        }}
+      />
+      {/* Slow vertical scan sweep — the signature ambient touch */}
+      <div
+        style={{
+          position: "absolute",
+          left: 0,
+          right: 0,
+          height: 140,
+          background: "linear-gradient(to bottom, transparent, rgba(51,214,255,0.05), transparent)",
+          animation: "scanSweep 9s linear infinite",
+          pointerEvents: "none",
+        }}
+      />
+      <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 1, background: "linear-gradient(90deg, transparent, rgba(51,214,255,0.5), transparent)", pointerEvents: "none" }} />
+
+      {view === "budget" && (
+      <div className="page-fade" style={{ maxWidth: 1120, margin: "0 auto", position: "relative" }}>
+        <div className="fade-up" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16 }}>
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+              <span
+                style={{
+                  width: 7,
+                  height: 7,
+                  borderRadius: "50%",
+                  background: GREEN,
+                  boxShadow: `0 0 6px ${GREEN}`,
+                  animation: "pulseDot 1.8s ease-in-out infinite",
+                }}
+              />
+              <span className="mono" style={{ fontSize: 11.5, letterSpacing: "0.16em", color: "#6B7686", textTransform: "uppercase" }}>
+                Budget telemetry · live
+              </span>
+            </div>
+            <h1 className="display" style={{ fontSize: "clamp(28px, 4vw, 46px)", fontWeight: 600, margin: 0, lineHeight: 1.05, letterSpacing: "-0.01em" }}>
+              Every dollar of{" "}
+              <span style={{ color: ACCENT, textShadow: `0 0 24px rgba(51,214,255,0.45)` }}>{fmt(animatedNet)}</span>
+              {" "}— mapped
+            </h1>
+            <div
+              ref={budgetUnderlineRef}
+              style={{
+                height: 3,
+                width: "100%",
+                maxWidth: 560,
+                marginTop: 12,
+                transformOrigin: "left center",
+                background: `linear-gradient(90deg, ${ACCENT}, rgba(51,214,255,0.05))`,
+                boxShadow: `0 0 14px 2px rgba(51,214,255,0.75), 0 0 38px 6px rgba(51,214,255,0.35)`,
+                transform: underlineArmed ? "scaleX(1)" : "scaleX(0)",
+                transition: "transform 0.32s linear",
+              }}
+            />
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setShowInfo(true)}
+            title="How this works"
+            aria-label="How this works"
+            style={{
+              flexShrink: 0,
+              width: 40,
+              height: 40,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              background: "rgba(51,214,255,0.08)",
+              border: "1px solid rgba(51,214,255,0.3)",
+              borderRadius: 2,
+              color: ACCENT,
+              cursor: "pointer",
+              zIndex: 10,
+            }}
+          >
+            <Settings size={18} strokeWidth={1.75} />
+          </button>
+        </div>
+
+        <div className="fade-up" style={{ position: "relative", marginTop: 22, marginBottom: 20, background: "rgba(51,214,255,0.035)", border: "1px solid rgba(51,214,255,0.16)", borderRadius: 3, padding: "18px 20px", maxWidth: 640 }}>
+          <CornerBrackets />
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
+            <span style={{ fontSize: 12.5, color: "#7E8CA3", textTransform: "uppercase", letterSpacing: "0.08em" }}>Your gross annual salary</span>
+            <span className="mono" style={{ fontSize: 20, fontWeight: 700, color: ACCENT }}>{fmt(grossSalary)}</span>
+          </div>
+          <input
+            type="range"
+            min={30000}
+            max={200000}
+            step={500}
+            value={grossSalary}
+            onChange={(e) => {
+              setGrossSalary(Number(e.target.value));
+              setOverrides({});
+            }}
+            className="salary-slider"
+            style={{ background: `linear-gradient(to right, ${ACCENT} 0%, ${ACCENT} ${sliderPct}%, rgba(51,214,255,0.18) ${sliderPct}%, rgba(51,214,255,0.18) 100%)` }}
+            aria-label="Gross annual salary"
+          />
+          <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6, fontSize: 11, color: "#526075" }}>
+            <span>$30,000</span>
+            <span>$200,000</span>
+          </div>
+          <div style={{ display: "flex", gap: 20, marginTop: 14, flexWrap: "wrap", fontSize: 12.5, color: "#7E8CA3" }}>
+            <span>Net monthly: <span className="mono" style={{ color: "#E7ECF2", fontWeight: 600 }}>{fmt(animatedNet)}</span></span>
+            <span>Effective tax rate: <span className="mono" style={{ color: "#E7ECF2", fontWeight: 600 }}>{(budget.effectiveRate * 100).toFixed(1)}%</span></span>
+            <span>Annual tax + deductions: <span className="mono" style={{ color: "#E7ECF2", fontWeight: 600 }}>{fmt(budget.annualTax)}</span></span>
+          </div>
+
+          <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px solid rgba(51,214,255,0.16)" }}>
+            {!snapshot ? (
+              <button
+                onClick={takeSnapshot}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  fontSize: 12,
+                  fontWeight: 600,
+                  letterSpacing: "0.03em",
+                  color: ACCENT,
+                  background: "rgba(51,214,255,0.1)",
+                  border: "1px solid rgba(51,214,255,0.4)",
+                  borderRadius: 2,
+                  padding: "7px 14px",
+                  cursor: "pointer",
+                }}
+                className="mono"
+              >
+                ▸ SNAPSHOT SCENARIO
+              </button>
+            ) : (
+              <div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                  <span style={{ fontSize: 11.5, letterSpacing: "0.08em", textTransform: "uppercase", color: "#6B7686" }}>
+                    What-if comparison
+                  </span>
+                  <button
+                    onClick={clearSnapshot}
+                    style={{ fontSize: 11.5, color: "#7E8CA3", background: "none", border: "none", cursor: "pointer" }}
+                  >
+                    ✕ Clear
+                  </button>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr auto auto auto", gap: "6px 14px", fontSize: 12.5 }}>
+                  <span style={{ color: "#526075" }} />
+                  <span style={{ color: "#526075", textAlign: "right" }}>Then</span>
+                  <span style={{ color: "#526075", textAlign: "right" }}>Now</span>
+                  <span style={{ color: "#526075", textAlign: "right" }}>Δ</span>
+                  <CompareRow label="Salary" then={snapshot.grossSalary} now={grossSalary} />
+                  <CompareRow label="Net monthly" then={snapshot.monthlyNet} now={budget.monthlyNet} />
+                  <CompareRow label="Total expenses" then={snapshot.expenseTotal} now={budget.expenseTotal} invert />
+                  <CompareRow label="Leftover/savings" then={snapshot.leftover} now={budget.leftover} />
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: 12, marginBottom: 24, flexWrap: "wrap" }} className="fade-up">
+          <LegendChip color={GREEN} label="Below Toronto average" />
+          <LegendChip color={RED} label="Above Toronto average" />
+          <LegendChip color={NEUTRAL} label="Roughly on par (~3%)" />
+        </div>
+
+        <div style={{ display: "flex", gap: 44, flexWrap: "wrap", alignItems: "flex-start" }}>
+          <div className="fade-up" style={{ position: "relative", flex: "1 1 500px", minWidth: 300, background: "rgba(51,214,255,0.02)", border: "1px solid rgba(51,214,255,0.16)", borderRadius: 3, padding: 16 }}>
+            <CornerBrackets />
+            <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} style={{ width: "100%", height: "auto", display: "block" }}>
+              <defs>
+                {nodes.map((n) => (
+                  <radialGradient key={`grad-${n.id}`} id={`grad-${n.id}`} cx="35%" cy="30%" r="80%">
+                    <stop offset="0%" stopColor={d3.color(n.color).brighter(0.7)} />
+                    <stop offset="100%" stopColor={n.color} />
+                  </radialGradient>
+                ))}
+              </defs>
+
+              {nodes.map((n) => {
+                if (!n.rect) return null;
+                const w = Math.max(0, n.rect.x1 - n.rect.x0);
+                const h = Math.max(0, n.rect.y1 - n.rect.y0);
+                const isLeftover = n.name === LEFTOVER_NAME;
+                return (
+                  <rect
+                    key={n.id}
+                    className="cell-rect"
+                    x={n.rect.x0}
+                    y={n.rect.y0}
+                    width={w}
+                    height={h}
+                    rx={1.5}
+                    fill={`url(#grad-${n.id})`}
+                    opacity={hovered === n.name ? 1 : 0.9}
+                    stroke="#05070A"
+                    strokeWidth={2}
+                    style={{ cursor: "pointer", filter: hovered === n.name ? "brightness(1.12) saturate(1.1)" : "none" }}
+                    onMouseEnter={() => setHovered(n.name)}
+                    onMouseLeave={() => setHovered(null)}
+                    onDoubleClick={isLeftover ? activateLeftoverPage : undefined}
+                  />
+                );
+              })}
+
+              {nodes.map((n) => {
+                if (!n.rect) return null;
+                const w = n.rect.x1 - n.rect.x0;
+                const h = n.rect.y1 - n.rect.y0;
+                const cx = n.rect.x0 + w / 2;
+                const cy = n.rect.y0 + h / 2;
+                const shortSide = Math.min(w, h);
+                const showLabel = shortSide > 46;
+                if (!showLabel) {
+                  return shortSide > 22 ? (
+                    <text key={`label-${n.id}`} x={cx} y={cy + 4} textAnchor="middle" fontSize={10} fontWeight={700} className="mono" fill="#05070A" style={{ pointerEvents: "none" }}>
+                      {fmt(n.value)}
+                    </text>
+                  ) : null;
+                }
+                const fontSize = shortSide > 90 ? 13 : 11;
+                return (
+                  <g key={`label-${n.id}`} style={{ pointerEvents: "none" }}>
+                    <text x={cx} y={cy - 4} textAnchor="middle" fontSize={fontSize} fontWeight={700} fill="#05070A">
+                      {n.name.length > 16 && shortSide < 110 ? n.name.split(" ")[0] : n.name}
+                    </text>
+                    <text x={cx} y={cy + 13} textAnchor="middle" fontSize={fontSize} className="mono" fill="#05070A">
+                      {fmt(n.value)}
+                    </text>
+                  </g>
+                );
+              })}
+            </svg>
+          </div>
+
+          <div className="fade-up" style={{ position: "relative", flex: "1 1 300px", minWidth: 270, background: "rgba(51,214,255,0.035)", border: "1px solid rgba(51,214,255,0.16)", borderRadius: 3, padding: "18px 14px", backdropFilter: "blur(6px)" }}>
+            <CornerBrackets />
+            <div className="mono" style={{ fontSize: 11, letterSpacing: "0.12em", color: "#6B7686", textTransform: "uppercase", marginBottom: 10, padding: "0 8px" }}>
+              ▸ Ledger — vs. Toronto avg
+            </div>
+            <div>
+              {orderedCategories.map((d) => {
+                const pct = ((d.value / budget.monthlyNet) * 100).toFixed(1);
+                const delta = d.value - d.avg;
+                const good = isGood(d);
+                const arrowColor = good === null ? NEUTRAL : good ? GREEN : RED;
+                const arrow = Math.round(delta) === 0 ? "—" : delta > 0 ? "▲" : "▼";
+                const adjustable = d.base !== null;
+                const isOverridden = adjustable && overrides[d.name] !== undefined;
+                const swatch = colorFor(d);
+                const sliderFillPct = adjustable ? Math.min(100, (d.value / d.max) * 100) : 0;
+                const isLeftover = d.name === LEFTOVER_NAME;
+                return (
+                  <div
+                    key={d.name}
+                    className="legend-row"
+                    onMouseEnter={() => setHovered(d.name)}
+                    onMouseLeave={() => setHovered(null)}
+                    onDoubleClick={isLeftover ? activateLeftoverPage : undefined}
+                    style={{ padding: "9px 8px", borderRadius: 10, cursor: isLeftover ? "pointer" : "default" }}
+                    title={isLeftover ? "Double-click to explore where to put this" : undefined}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+                        <span style={{ width: 10, height: 10, borderRadius: 1, background: swatch, boxShadow: `0 0 5px ${swatch}66`, flexShrink: 0 }} />
+                        <span style={{ fontSize: 13.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{d.name}</span>
+                      </div>
+                      <div style={{ display: "flex", gap: 10, alignItems: "baseline", flexShrink: 0 }}>
+                        <span className="mono" style={{ fontSize: 11.5, color: arrowColor }}>{arrow} {fmt(Math.abs(delta))}</span>
+                        <span className="mono" style={{ fontSize: 12, color: "#6B7686" }}>{pct}%</span>
+                        <span className="mono" style={{ fontSize: 13.5, fontWeight: 600 }}>{fmt(d.value)}</span>
+                      </div>
+                    </div>
+
+                    {adjustable && (
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 9, paddingLeft: 20 }}>
+                        <input
+                          type="range"
+                          min={0}
+                          max={d.max}
+                          step={Math.max(1, Math.round(d.max / 200))}
+                          value={d.value}
+                          onChange={(e) => setOverride(d.name, Number(e.target.value))}
+                          className="cat-slider"
+                          style={{
+                            background: `linear-gradient(to right, ${swatch} 0%, ${swatch} ${sliderFillPct}%, rgba(51,214,255,0.14) ${sliderFillPct}%, rgba(51,214,255,0.14) 100%)`,
+                            "--thumb-color": swatch,
+                          }}
+                          aria-label={`${d.name} monthly amount`}
+                        />
+                        <button
+                          onClick={() => resetOverride(d.name)}
+                          disabled={!isOverridden}
+                          title="Reset to default"
+                          className="reset-btn"
+                          style={{
+                            color: isOverridden ? "#7E8CA3" : "#3A4152",
+                            background: "none",
+                            border: "none",
+                            cursor: isOverridden ? "pointer" : "default",
+                            flexShrink: 0,
+                          }}
+                        >
+                          ↺
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              <div style={{ display: "flex", justifyContent: "space-between", padding: "14px 8px 4px", marginTop: 6, borderTop: "1px solid rgba(51,214,255,0.18)", fontSize: 13.5, fontWeight: 700 }}>
+                <span>Net income</span>
+                <span className="mono">{fmt(budget.monthlyNet)}</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", padding: "2px 8px 0", fontSize: 12, color: "#6B7686" }}>
+                <span>Toronto average total spend</span>
+                <span className="mono">{fmt(budget.avgExpenseTotal)}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Pie chart */}
+        <div className="fade-up" style={{ marginTop: 40 }}>
+          <div className="mono" style={{ fontSize: 11, letterSpacing: "0.12em", color: "#6B7686", textTransform: "uppercase", marginBottom: 14 }}>
+            ▸ Same breakdown — radial view
+          </div>
+          <div style={{ display: "flex", gap: 44, flexWrap: "wrap", alignItems: "center" }}>
+            <div style={{ position: "relative", flex: "0 0 auto", background: "rgba(51,214,255,0.02)", border: "1px solid rgba(51,214,255,0.16)", borderRadius: 3, padding: 20 }}>
+              <CornerBrackets />
+              <PieChart nodes={nodes} hovered={hovered} setHovered={setHovered} onLeftoverActivate={activateLeftoverPage} />
+            </div>
+          </div>
+        </div>
+
+        <div className="mono" style={{ marginTop: 18, fontSize: 11, color: "#3D4658", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+          ▸ Double-click leftover/savings to route it
+        </div>
+      </div>
+      )}
+
+      {view === "leftover" && (
+        <LeftoverOptionsPage
+          leftoverAmount={budget.leftover}
+          monthlyExpenses={budget.expenseTotal}
+          grossSalary={grossSalary}
+          onBack={returnToBudget}
+          underlineArmed={underlineArmed}
+          underlineRef={leftoverUnderlineRef}
+        />
+      )}
+
+      {cyclePhase && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 100, pointerEvents: "none" }}>
+          {/* Grid rush — the world accelerating past */}
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              backgroundImage: `linear-gradient(90deg, ${ACCENT}1A 1px, transparent 1px)`,
+              backgroundSize: "26px 100%",
+              animation: "gridRush 0.5s ease-out forwards",
+            }}
+          />
+
+          {cyclePhase === "exit" && (
+            <>
+              {/* Trail streaking right off the edge, from wherever you clicked */}
+              <div
+                style={{
+                  position: "absolute",
+                  left: cycleOrigin.x,
+                  top: cycleOrigin.y - 1.5,
+                  height: 3,
+                  width: `calc(108vw - ${cycleOrigin.x}px)`,
+                  transformOrigin: "left center",
+                  background: `linear-gradient(90deg, transparent, ${ACCENT})`,
+                  boxShadow: `0 0 16px 3px ${ACCENT}, 0 0 44px 8px rgba(51,214,255,0.45)`,
+                  animation: "trailSweep 0.46s linear forwards",
+                }}
+              />
+              <div
+                style={{
+                  position: "absolute",
+                  top: cycleOrigin.y,
+                  width: 16,
+                  height: 16,
+                  marginLeft: -8,
+                  marginTop: -8,
+                  borderRadius: "50%",
+                  background: "#FFFFFF",
+                  boxShadow: `0 0 12px 4px #FFFFFF, 0 0 34px 10px ${ACCENT}, 0 0 70px 20px rgba(51,214,255,0.5)`,
+                  "--ox": `${cycleOrigin.x}px`,
+                  animation: "cycleExit 0.46s cubic-bezier(.45,0,.75,.3) forwards",
+                }}
+              />
+            </>
+          )}
+
+          {cyclePhase === "enter" && (
+            <>
+              {/* Zig-zag trail segments, drawn in step with the rider's climb.
+                  The final vertical leg lands exactly on the measured underline. */}
+              <TrailX left="-6vw"  top="82vh" width="28vw" delay={0.054} dur={0.108} />
+              <TrailY left="22vw"  top="58vh" height="24vh" delay={0.162} dur={0.108} />
+              <TrailX left="22vw"  top="58vh" width="30vw" delay={0.27}  dur={0.126} />
+              <TrailY left="52vw"  top="34vh" height="24vh" delay={0.396} dur={0.108} />
+              <TrailX left="52vw"  top="34vh" width={`${52 * window.innerWidth / 100 - headerLine.x}px`} delay={0.504} dur={0.126} reverse />
+              <TrailY
+                left={`${headerLine.x}px`}
+                top={`${headerLine.y}px`}
+                height={`calc(34vh - ${headerLine.y}px)`}
+                delay={0.63}
+                dur={0.09}
+              />
+
+              {/* Rider */}
+              <div
+                style={{
+                  position: "absolute",
+                  width: 16,
+                  height: 16,
+                  marginLeft: -8,
+                  marginTop: -8,
+                  borderRadius: "50%",
+                  background: "#FFFFFF",
+                  boxShadow: `0 0 12px 4px #FFFFFF, 0 0 34px 10px ${ACCENT}, 0 0 70px 20px rgba(51,214,255,0.5)`,
+                  "--hy": `${headerLine.y}px`,
+                  "--hx": `${headerLine.x}px`,
+                  "--hw": `${headerLine.w}px`,
+                  animation: "cycleEnter 0.9s linear forwards",
+                }}
+              />
+            </>
+          )}
+        </div>
+      )}
+
+      {showInfo && (
+        <div
+          onClick={() => setShowInfo(false)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(2,3,5,0.75)",
+            backdropFilter: "blur(3px)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 20,
+            zIndex: 50,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              position: "relative",
+              maxWidth: 560,
+              width: "100%",
+              maxHeight: "80vh",
+              overflowY: "auto",
+              background: "#0A0D13",
+              border: "1px solid rgba(51,214,255,0.3)",
+              borderRadius: 3,
+              padding: "24px 24px 20px",
+            }}
+          >
+            <CornerBrackets size={16} />
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
+              <span className="mono" style={{ fontSize: 12, letterSpacing: "0.14em", color: ACCENT, textTransform: "uppercase" }}>
+                ▸ How this works
+              </span>
+              <button
+                onClick={() => setShowInfo(false)}
+                aria-label="Close"
+                style={{ background: "none", border: "none", color: "#7E8CA3", cursor: "pointer", padding: 4 }}
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <InfoSection title="Coloring">
+              Cell color compares each category to a typical downtown Toronto renter: <span style={{ color: GREEN }}>green</span> is
+              below average, <span style={{ color: RED }}>red</span> is above — reversed for{" "}
+              <strong style={{ color: "#E7ECF2" }}>leftover/savings</strong>, where more is better.
+            </InfoSection>
+
+            <InfoSection title="Rent & vehicle">
+              Rent (30% cap) and vehicle (10% rule) scale automatically with your income. Every other category is a
+              fixed 2026 Toronto market price, verified against real pricing.
+            </InfoSection>
+
+            <InfoSection title="Sliders">
+              Every category in the ledger has its own slider (0 to 2× its default) so you can tune your actual
+              spending — leftover/savings adjusts automatically since it's whatever remains. Moving the main salary
+              slider resets all category overrides back to default.
+            </InfoSection>
+
+            <InfoSection title="Layout accuracy">
+              Tiles use a squarified treemap layout — every section is an exact rectangle (biased toward square)
+              sized precisely to its share of net income, the only way to get true squares while keeping area
+              proportional. Category order is fixed, so tiles resize smoothly and stay in roughly the same
+              neighbourhood as the slider moves. The pie chart shows the same data as a radial view — slice angle
+              matches each category's share of net income, with the same coloring rules.
+            </InfoSection>
+
+            <InfoSection title="Tax calculation" last>
+              Assumes 2026 CRA federal brackets, Ontario brackets/surtax/health premium, CPP (incl. CPP2), and EI,
+              with both partners earning the slider amount.
+            </InfoSection>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================
+// Holdings model
+// Rates: deposit rates reflect 2026 ongoing Canadian HISA levels; market rates
+// are long-run historical averages, not forecasts. Bear/base/bull multipliers
+// stress-test those assumptions rather than predicting anything.
+// ============================================================
+
+const LEFTOVER_OPTIONS = [
+  {
+    name: "High-Interest Savings (HISA)",
+    tag: "LIQUIDITY",
+    color: "#3DFFB0",
+    rate: 0.03,
+    assetClass: "Cash",
+    room: null,
+    isEmergency: true,
+    rateNote: "ongoing 2026 HISA rates run ~2.75–3.5%",
+    body:
+      "Fully liquid, no lock-in. The natural home for a 3–6 month emergency fund before money goes anywhere else.",
+  },
+  {
+    name: "TFSA",
+    tag: "TAX-FREE GROWTH",
+    color: "#33D6FF",
+    rate: 0.06,
+    assetClass: "Equity",
+    room: { type: "fixed", lifetime: 109000, annual: 7000 },
+    rateNote: "assumes a balanced portfolio held inside the account",
+    body:
+      "2026 room is $7,000/yr; $109,000 lifetime if eligible since 2009. Growth and withdrawals entirely tax-free.",
+  },
+  {
+    name: "RRSP",
+    tag: "TAX-DEFERRED",
+    color: "#7C6FF2",
+    rate: 0.06,
+    assetClass: "Equity",
+    room: { type: "income", pct: 0.18, cap: 33810 },
+    rateNote: "assumes a balanced portfolio; withdrawals taxed later",
+    body:
+      "Deducted from this year's taxable income; taxed on withdrawal, ideally at a lower retirement-era rate.",
+  },
+  {
+    name: "FHSA",
+    tag: "FIRST HOME",
+    color: "#FFC145",
+    rate: 0.05,
+    assetClass: "Balanced",
+    room: { type: "fixed", lifetime: 40000, annual: 8000 },
+    rateNote: "shorter horizon usually means a more conservative mix",
+    body:
+      "$8,000/yr, $40,000 lifetime. Deductible like an RRSP, tax-free out like a TFSA for a qualifying first home.",
+  },
+  {
+    name: "Low-Cost Index/Tracker ETF",
+    tag: "LONG-TERM GROWTH",
+    color: "#FF5470",
+    rate: 0.07,
+    assetClass: "Equity",
+    room: null,
+    rateNote: "long-run global equity average, before inflation",
+    body:
+      "Broad-market ETFs for long-term growth. Outside a registered account, gains are taxable.",
+  },
+  {
+    name: "Bonds / GICs",
+    tag: "DEFENSIVE",
+    color: "#5BC8E8",
+    rate: 0.035,
+    assetClass: "Fixed Income",
+    room: null,
+    rateNote: "2026 GIC rates run ~2.25–3.85% for 1–5yr terms",
+    body:
+      "Lower expected return, lower volatility. Ballast that cushions equity drawdowns and funds nearer-term goals.",
+  },
+  {
+    name: "Crypto Assets",
+    tag: "HIGH VOLATILITY",
+    color: "#FF8A3D",
+    rate: 0.1,
+    assetClass: "Alternative",
+    room: null,
+    rateNote: "placeholder only — outcomes range from total loss to many multiples",
+    body:
+      "No CDIC/CIPF protection. Can't be held directly in a TFSA/RRSP, though Canadian-listed crypto ETFs can.",
+  },
+  {
+    name: "Extra Debt Repayment",
+    tag: "GUARANTEED RETURN",
+    color: "#7E8CA3",
+    rate: 0.1,
+    assetClass: "Debt Payoff",
+    room: null,
+    rateNote: "equals the interest rate avoided; credit cards run ~20%",
+    body:
+      "A guaranteed return equal to the interest avoided — hard to beat before high-interest debt is cleared.",
+  },
+];
+
+const HORIZONS = [1, 3, 5, 10];
+const ALLOC_MAX = 100000;
+const CONTRIB_MAX = 5000;
+const PROJECTION_YEARS = 10;
+
+const SCENARIOS = {
+  bear: { label: "BEAR", mult: 0.5, color: "#FF5470" },
+  base: { label: "BASE", mult: 1, color: "#33D6FF" },
+  bull: { label: "BULL", mult: 1.45, color: "#3DFFB0" },
+};
+
+const ASSET_CLASS_COLORS = {
+  Equity: "#FF5470",
+  "Fixed Income": "#5BC8E8",
+  Cash: "#3DFFB0",
+  Balanced: "#FFC145",
+  Alternative: "#FF8A3D",
+  "Debt Payoff": "#7E8CA3",
+};
+// Rough growth-vs-defensive split used for the risk gauge.
+const DEFENSIVE_CLASSES = new Set(["Cash", "Fixed Income", "Debt Payoff"]);
+
+const INFLATION = 0.021;
+
+// Future value of a lump sum plus monthly contributions, compounded monthly.
+function projectValue(balance, monthlyContrib, annualRate, years) {
+  const r = annualRate / 12;
+  const n = years * 12;
+  if (Math.abs(r) < 1e-9) return balance + monthlyContrib * n;
+  return balance * Math.pow(1 + r, n) + monthlyContrib * ((Math.pow(1 + r, n) - 1) / r);
+}
+
+const STORAGE_KEY = "holdings:v1";
+
+function LeftoverOptionsPage({
+  leftoverAmount,
+  monthlyExpenses,
+  grossSalary,
+  onBack,
+  underlineArmed,
+  underlineRef,
+}) {
+  const [balances, setBalances] = useState({});
+  const [contribs, setContribs] = useState({});
+  const [targets, setTargets] = useState({});
+  const [roomUsed, setRoomUsed] = useState({});
+  const [scenario, setScenario] = useState("base");
+  const [realDollars, setRealDollars] = useState(false);
+  const [household, setHousehold] = useState(false);
+  const [goal, setGoal] = useState(100000);
+  const [loaded, setLoaded] = useState(false);
+  const [saveState, setSaveState] = useState("idle");
+
+  // Restore any saved holdings on mount.
+  useEffect(() => {
+    (async () => {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (raw) {
+          const d = JSON.parse(raw);
+          setBalances(d.balances ?? {});
+          setContribs(d.contribs ?? {});
+          setTargets(d.targets ?? {});
+          setRoomUsed(d.roomUsed ?? {});
+          setGoal(d.goal ?? 100000);
+          setHousehold(d.household ?? false);
+        }
+      } catch {
+        /* nothing saved yet */
+      }
+      setLoaded(true);
+    })();
+  }, []);
+
+  const save = async () => {
+    setSaveState("saving");
+    try {
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({ balances, contribs, targets, roomUsed, goal, household })
+      );
+      setSaveState("saved");
+      setTimeout(() => setSaveState("idle"), 1800);
+    } catch {
+      setSaveState("error");
+      setTimeout(() => setSaveState("idle"), 2400);
+    }
+  };
+
+  const hhMult = household ? 2 : 1;
+  const num = (raw, max) => Math.min(max, Math.max(0, Number(raw) || 0));
+  const setBalance = (k, v) => setBalances((p) => ({ ...p, [k]: num(v, ALLOC_MAX) }));
+  const setContrib = (k, v) => setContribs((p) => ({ ...p, [k]: num(v, CONTRIB_MAX) }));
+  const setTarget = (k, v) => setTargets((p) => ({ ...p, [k]: num(v, 100) }));
+  const setRoom = (k, v) => setRoomUsed((p) => ({ ...p, [k]: num(v, 1000000) }));
+
+  const bal = (o) => (balances[o.name] ?? 0) * hhMult;
+  const mo = (o) => (contribs[o.name] ?? 0) * hhMult;
+
+  const totalBalance = LEFTOVER_OPTIONS.reduce((s, o) => s + bal(o), 0);
+  const totalMonthly = LEFTOVER_OPTIONS.reduce((s, o) => s + mo(o), 0);
+  const contribRemaining = leftoverAmount * hhMult - totalMonthly;
+  const scen = SCENARIOS[scenario];
+  const effRate = (o) => o.rate * scen.mult;
+
+  const blendedRate =
+    totalBalance > 0
+      ? LEFTOVER_OPTIONS.reduce((s, o) => s + bal(o) * effRate(o), 0) / totalBalance
+      : 0;
+
+  const adjust = (v, years) => (realDollars ? v / Math.pow(1 + INFLATION, years) : v);
+
+  const totalAt = (years) =>
+    adjust(
+      LEFTOVER_OPTIONS.reduce((s, o) => s + projectValue(bal(o), mo(o), effRate(o), years), 0),
+      years
+    );
+
+  // ---- Asset class rollup (cuts across accounts) ----
+  const byClass = {};
+  LEFTOVER_OPTIONS.forEach((o) => {
+    byClass[o.assetClass] = (byClass[o.assetClass] ?? 0) + bal(o);
+  });
+  const classRows = Object.entries(byClass)
+    .filter(([, v]) => v > 0)
+    .sort((a, b) => b[1] - a[1]);
+  const defensiveTotal = LEFTOVER_OPTIONS.reduce(
+    (s, o) => s + (DEFENSIVE_CLASSES.has(o.assetClass) ? bal(o) : 0),
+    0
+  );
+  const growthPct = totalBalance > 0 ? ((totalBalance - defensiveTotal) / totalBalance) * 100 : 0;
+
+  // ---- Emergency fund runway ----
+  const emergencyBalance = LEFTOVER_OPTIONS.reduce((s, o) => s + (o.isEmergency ? bal(o) : 0), 0);
+  const runwayMonths = monthlyExpenses > 0 ? emergencyBalance / (monthlyExpenses * hhMult) : 0;
+
+  // ---- Goal tracking ----
+  const goalTarget = goal * hhMult;
+  const goalPct = goalTarget > 0 ? Math.min(100, (totalBalance / goalTarget) * 100) : 0;
+  const yearsToGoal = (() => {
+    if (totalBalance >= goalTarget) return 0;
+    if (totalMonthly <= 0 && blendedRate <= 0) return null;
+    for (let y = 0.5; y <= 60; y += 0.5) {
+      const v = LEFTOVER_OPTIONS.reduce((s, o) => s + projectValue(bal(o), mo(o), effRate(o), y), 0);
+      if (v >= goalTarget) return y;
+    }
+    return null;
+  })();
+
+  // ---- Job-loss stress test ----
+  const jobLossMonths = monthlyExpenses > 0
+    ? (emergencyBalance + totalMonthly * 36) / (monthlyExpenses * hhMult)
+    : 0;
+
+  // ---- Stacked projection series ----
+  const stackSeries = LEFTOVER_OPTIONS.map((o) => ({
+    name: o.name,
+    color: o.color,
+    points: Array.from({ length: PROJECTION_YEARS + 1 }, (_, y) =>
+      adjust(projectValue(bal(o), mo(o), effRate(o), y), y)
+    ),
+  })).filter((s) => s.points[PROJECTION_YEARS] > 0);
+
+  const stackMax = Math.max(
+    1,
+    ...Array.from({ length: PROJECTION_YEARS + 1 }, (_, y) =>
+      stackSeries.reduce((s, ser) => s + ser.points[y], 0)
+    )
+  );
+
+  return (
+    <div className="page-fade" style={{ maxWidth: 1120, margin: "0 auto", position: "relative" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16 }}>
+        <div>
+          <div className="mono" style={{ fontSize: 11.5, letterSpacing: "0.16em", color: "#6B7686", textTransform: "uppercase", marginBottom: 12 }}>
+            ▸ Holdings dashboard
+          </div>
+          <h1 className="display" style={{ fontSize: "clamp(26px, 3.6vw, 40px)", fontWeight: 600, margin: 0, lineHeight: 1.1 }}>
+            Portfolio worth{" "}
+            <span style={{ color: ACCENT, textShadow: `0 0 24px rgba(51,214,255,0.45)` }}>{fmt(totalBalance)}</span>
+          </h1>
+        </div>
+
+        <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+          <button type="button" onClick={save} className="mono" style={ghostBtn}>
+            {saveState === "saving" ? "SAVING…" : saveState === "saved" ? "✓ SAVED" : saveState === "error" ? "✕ FAILED" : "⬇ SAVE"}
+          </button>
+          <button type="button" onClick={onBack} className="mono" style={ghostBtn}>
+            ◂ BACK
+          </button>
+        </div>
+      </div>
+
+      <div
+        ref={underlineRef}
+        style={{
+          height: 3,
+          width: "100%",
+          maxWidth: 620,
+          marginTop: 12,
+          marginBottom: 18,
+          transformOrigin: "left center",
+          background: `linear-gradient(90deg, ${ACCENT}, rgba(51,214,255,0.05))`,
+          boxShadow: `0 0 14px 2px rgba(51,214,255,0.75), 0 0 38px 6px rgba(51,214,255,0.35)`,
+          transform: underlineArmed ? "scaleX(1)" : "scaleX(0)",
+          transition: "transform 0.32s linear",
+        }}
+      />
+
+      {/* ---- Controls ---- */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", marginBottom: 18 }}>
+        <div style={{ display: "flex", border: "1px solid rgba(51,214,255,0.2)", borderRadius: 2, overflow: "hidden" }}>
+          {Object.entries(SCENARIOS).map(([k, s]) => (
+            <button
+              key={k}
+              type="button"
+              onClick={() => setScenario(k)}
+              className="mono"
+              style={{
+                fontSize: 10.5,
+                letterSpacing: "0.08em",
+                padding: "7px 12px",
+                background: scenario === k ? `${s.color}22` : "transparent",
+                color: scenario === k ? s.color : "#6B7686",
+                border: "none",
+                cursor: "pointer",
+              }}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
+        <Toggle on={realDollars} onClick={() => setRealDollars((v) => !v)} label={`INFLATION-ADJ (${(INFLATION * 100).toFixed(1)}%)`} />
+        <Toggle on={household} onClick={() => setHousehold((v) => !v)} label="HOUSEHOLD (×2)" />
+        <span className="mono" style={{ fontSize: 10.5, color: "#3D4658" }}>
+          {realDollars ? "showing today's purchasing power" : "showing nominal dollars"}
+        </span>
+      </div>
+
+      {/* ---- Summary strip ---- */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginBottom: 18 }}>
+        <Stat label="Total holdings" value={fmt(totalBalance)} />
+        <Stat label="Monthly in" value={fmt(totalMonthly)} sub={`${fmt(Math.abs(contribRemaining))} ${contribRemaining >= 0 ? "unallocated" : "over leftover"}`} subColor={contribRemaining >= 0 ? GREEN : RED} />
+        <Stat label="Blended rate" value={`${(blendedRate * 100).toFixed(2)}%`} sub={`${scen.label.toLowerCase()} case`} subColor={scen.color} />
+        <Stat
+          label="Emergency runway"
+          value={`${runwayMonths.toFixed(1)} mo`}
+          sub={runwayMonths >= 3 ? "3–6 mo target met" : "below 3 mo target"}
+          subColor={runwayMonths >= 3 ? GREEN : RED}
+        />
+        <Stat label="Growth / defensive" value={`${growthPct.toFixed(0)} / ${(100 - growthPct).toFixed(0)}`} sub="equity vs. ballast" />
+      </div>
+
+      {/* ---- Stacked projection chart ---- */}
+      <Panel title={`▸ ${PROJECTION_YEARS}-year projection by account`}>
+        {totalBalance + totalMonthly > 0 ? (
+          <StackedAreaChart series={stackSeries} max={stackMax} years={PROJECTION_YEARS} />
+        ) : (
+          <Empty>Enter balances or monthly contributions below to see projected growth.</Empty>
+        )}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginTop: 12 }}>
+          {stackSeries.map((s) => (
+            <div key={s.name} className="mono" style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 10, color: "#7E8CA3" }}>
+              <span style={{ width: 8, height: 8, background: s.color, boxShadow: `0 0 5px ${s.color}` }} />
+              {s.name}
+            </div>
+          ))}
+        </div>
+      </Panel>
+
+      {/* ---- Goal + stress test ---- */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 14, marginBottom: 18 }}>
+        <Panel title="▸ Goal progress" noMargin>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+            <span className="mono" style={{ fontSize: 12, color: ACCENT }}>$</span>
+            <input
+              type="number"
+              min={0}
+              step={5000}
+              value={goal}
+              onChange={(e) => setGoal(num(e.target.value, 100000000))}
+              className="mono alloc-input"
+              aria-label="Goal amount"
+            />
+          </div>
+          <div style={{ height: 10, background: "rgba(51,214,255,0.1)", borderRadius: 1, overflow: "hidden", marginBottom: 8 }}>
+            <div style={{ height: "100%", width: `${goalPct}%`, background: `linear-gradient(90deg, ${ACCENT}, ${GREEN})`, boxShadow: `0 0 12px ${ACCENT}`, transition: "width 0.4s ease" }} />
+          </div>
+          <div className="mono" style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "#7E8CA3" }}>
+            <span>{goalPct.toFixed(1)}% there</span>
+            <span style={{ color: "#E7ECF2" }}>
+              {yearsToGoal === 0
+                ? "goal reached"
+                : yearsToGoal === null
+                ? "not reachable at this rate"
+                : `${yearsToGoal.toFixed(1)} yrs to go`}
+            </span>
+          </div>
+        </Panel>
+
+        <Panel title="▸ Job-loss stress test" noMargin>
+          <p style={{ margin: "0 0 10px", fontSize: 12, lineHeight: 1.5, color: "#9AA6BA" }}>
+            If income stopped, liquid savings alone would cover{" "}
+            <strong style={{ color: runwayMonths >= 3 ? GREEN : RED }}>{runwayMonths.toFixed(1)} months</strong> of
+            expenses at {fmt(monthlyExpenses * hhMult)}/mo.
+          </p>
+          <p style={{ margin: 0, fontSize: 12, lineHeight: 1.5, color: "#9AA6BA" }}>
+            After 3 more years of contributions, that rises to{" "}
+            <strong style={{ color: "#E7ECF2" }}>{jobLossMonths.toFixed(1)} months</strong>.
+          </p>
+        </Panel>
+      </div>
+
+      {/* ---- Asset class breakdown ---- */}
+      <Panel title="▸ Asset class exposure (across all accounts)">
+        {classRows.length === 0 ? (
+          <Empty>Add balances to see how your exposure splits by asset class.</Empty>
+        ) : (
+          <>
+            <div style={{ display: "flex", height: 26, borderRadius: 1, overflow: "hidden", marginBottom: 14 }}>
+              {classRows.map(([cls, v]) => (
+                <div
+                  key={cls}
+                  title={`${cls}: ${fmt(v)}`}
+                  style={{
+                    width: `${(v / totalBalance) * 100}%`,
+                    background: ASSET_CLASS_COLORS[cls],
+                    boxShadow: `0 0 12px ${ASSET_CLASS_COLORS[cls]}66`,
+                  }}
+                />
+              ))}
+            </div>
+            {classRows.map(([cls, v]) => (
+              <div key={cls} className="mono" style={{ display: "flex", justifyContent: "space-between", fontSize: 11.5, padding: "4px 0" }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 8, color: "#B9C4D6" }}>
+                  <span style={{ width: 8, height: 8, background: ASSET_CLASS_COLORS[cls] }} />
+                  {cls}
+                </span>
+                <span>
+                  <span style={{ color: "#6B7686", marginRight: 10 }}>{((v / totalBalance) * 100).toFixed(1)}%</span>
+                  <span style={{ color: "#E7ECF2", fontWeight: 600 }}>{fmt(v)}</span>
+                </span>
+              </div>
+            ))}
+          </>
+        )}
+      </Panel>
+
+      {/* ---- Per-account cards ---- */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 14 }}>
+        {LEFTOVER_OPTIONS.map((opt) => {
+          const balance = balances[opt.name] ?? 0;
+          const monthly = contribs[opt.name] ?? 0;
+          const targetPct = targets[opt.name] ?? 0;
+          const actualPct = totalBalance > 0 ? (bal(opt) / totalBalance) * 100 : 0;
+          const drift = actualPct - targetPct;
+          const driftDollars = (drift / 100) * totalBalance;
+
+          // Contribution room
+          let roomInfo = null;
+          if (opt.room) {
+            const used = roomUsed[opt.name] ?? 0;
+            const limit =
+              opt.room.type === "income"
+                ? Math.min(grossSalary * opt.room.pct, opt.room.cap)
+                : opt.room.lifetime;
+            const remaining = limit - used;
+            roomInfo = { used, limit, remaining, annual: opt.room.annual };
+          }
+
+          return (
+            <div key={opt.name} style={cardStyle}>
+              <CornerBrackets size={10} color={opt.color} />
+              <div className="mono" style={{ fontSize: 10, letterSpacing: "0.1em", color: opt.color, marginBottom: 8 }}>
+                {opt.tag} · {opt.assetClass}
+              </div>
+              <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 6, color: "#E7ECF2" }}>{opt.name}</div>
+              <p style={{ margin: "0 0 14px", fontSize: 12, lineHeight: 1.5, color: "#9AA6BA" }}>{opt.body}</p>
+
+              <Field label="Current balance" color={opt.color}>
+                <input type="number" min={0} max={ALLOC_MAX} step={100} value={balance} onChange={(e) => setBalance(opt.name, e.target.value)} className="mono alloc-input" />
+              </Field>
+              <input
+                type="range" min={0} max={ALLOC_MAX} step={500} value={balance}
+                onChange={(e) => setBalance(opt.name, e.target.value)}
+                className="cat-slider"
+                style={{ ...sliderStyle(balance / ALLOC_MAX, opt.color), marginBottom: 12 }}
+              />
+
+              <Field label="Monthly contribution" color={opt.color}>
+                <input type="number" min={0} max={CONTRIB_MAX} step={25} value={monthly} onChange={(e) => setContrib(opt.name, e.target.value)} className="mono alloc-input" />
+              </Field>
+              <input
+                type="range" min={0} max={CONTRIB_MAX} step={25} value={monthly}
+                onChange={(e) => setContrib(opt.name, e.target.value)}
+                className="cat-slider"
+                style={{ ...sliderStyle(monthly / CONTRIB_MAX, opt.color), marginBottom: 12 }}
+              />
+
+              {/* Target vs actual drift */}
+              <div style={{ borderTop: "1px solid rgba(51,214,255,0.12)", paddingTop: 10, marginBottom: 10 }}>
+                <div className="mono" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 10, color: "#6B7686", marginBottom: 6 }}>
+                  <span>TARGET %</span>
+                  <input
+                    type="number" min={0} max={100} step={1} value={targetPct}
+                    onChange={(e) => setTarget(opt.name, e.target.value)}
+                    className="mono alloc-input"
+                    style={{ width: 62, flex: "0 0 auto", padding: "4px 6px", fontSize: 11 }}
+                  />
+                </div>
+                {targetPct > 0 && (
+                  <div className="mono" style={{ fontSize: 10.5, color: Math.abs(drift) < 2 ? GREEN : "#FFC145" }}>
+                    {Math.abs(drift) < 2
+                      ? `✓ on target (${actualPct.toFixed(1)}%)`
+                      : drift > 0
+                      ? `▲ ${drift.toFixed(1)}pp over — trim ${fmt(Math.abs(driftDollars))}`
+                      : `▼ ${Math.abs(drift).toFixed(1)}pp under — add ${fmt(Math.abs(driftDollars))}`}
+                  </div>
+                )}
+              </div>
+
+              {/* Contribution room */}
+              {roomInfo && (
+                <div style={{ borderTop: "1px solid rgba(51,214,255,0.12)", paddingTop: 10, marginBottom: 10 }}>
+                  <div className="mono" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 10, color: "#6B7686", marginBottom: 6 }}>
+                    <span>ROOM USED</span>
+                    <input
+                      type="number" min={0} step={500} value={roomInfo.used}
+                      onChange={(e) => setRoom(opt.name, e.target.value)}
+                      className="mono alloc-input"
+                      style={{ width: 82, flex: "0 0 auto", padding: "4px 6px", fontSize: 11 }}
+                    />
+                  </div>
+                  <div style={{ height: 5, background: "rgba(51,214,255,0.1)", borderRadius: 1, overflow: "hidden", marginBottom: 5 }}>
+                    <div style={{ height: "100%", width: `${Math.min(100, (roomInfo.used / roomInfo.limit) * 100)}%`, background: roomInfo.remaining < 0 ? RED : opt.color }} />
+                  </div>
+                  <div className="mono" style={{ fontSize: 10, color: roomInfo.remaining < 0 ? RED : "#7E8CA3" }}>
+                    {roomInfo.remaining < 0
+                      ? `⚠ over by ${fmt(Math.abs(roomInfo.remaining))} — penalties may apply`
+                      : `${fmt(roomInfo.remaining)} room left of ${fmt(roomInfo.limit)}`}
+                  </div>
+                  <div className="mono" style={{ fontSize: 9.5, color: "#3D4658", marginTop: 3 }}>
+                    {opt.room.type === "income" ? "18% of income, CRA capped" : `${fmt(roomInfo.annual)}/yr`}
+                  </div>
+                </div>
+              )}
+
+              {/* Projections */}
+              <div style={{ borderTop: "1px solid rgba(51,214,255,0.12)", paddingTop: 10 }}>
+                <div className="mono" style={{ fontSize: 9.5, letterSpacing: "0.08em", color: "#6B7686", textTransform: "uppercase", marginBottom: 7 }}>
+                  Projected @ {(effRate(opt) * 100).toFixed(1)}%/yr
+                </div>
+                {HORIZONS.map((yr) => {
+                  const fv = adjust(projectValue(bal(opt), mo(opt), effRate(opt), yr), yr);
+                  const invested = bal(opt) + mo(opt) * 12 * yr;
+                  const gain = fv - invested;
+                  return (
+                    <div key={yr} className="mono" style={{ display: "flex", justifyContent: "space-between", fontSize: 11, padding: "2.5px 0" }}>
+                      <span style={{ color: "#6B7686" }}>{yr}y</span>
+                      <span>
+                        <span style={{ color: "#E7ECF2", fontWeight: 600 }}>{fmt(fv)}</span>
+                        {gain > 0 && <span style={{ color: opt.color, marginLeft: 6 }}>+{fmt(gain)}</span>}
+                      </span>
+                    </div>
+                  );
+                })}
+                <div style={{ fontSize: 9.5, color: "#3D4658", marginTop: 7, lineHeight: 1.4 }}>{opt.rateNote}</div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* ---- Grand totals ---- */}
+      <div style={{ position: "relative", marginTop: 24, background: "rgba(51,214,255,0.05)", border: "1px solid rgba(51,214,255,0.28)", borderRadius: 3, padding: "20px 20px 22px" }}>
+        <CornerBrackets size={14} />
+        <div className="mono" style={{ fontSize: 11, letterSpacing: "0.14em", color: ACCENT, textTransform: "uppercase", marginBottom: 16 }}>
+          ▸ Combined portfolio · {scen.label} case{realDollars ? " · today's dollars" : ""}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 16 }}>
+          <div>
+            <div className="mono" style={{ fontSize: 10, letterSpacing: "0.08em", color: "#6B7686", textTransform: "uppercase", marginBottom: 6 }}>
+              Today
+            </div>
+            <div className="mono" style={{ fontSize: 22, fontWeight: 700, color: "#E7ECF2" }}>{fmt(totalBalance)}</div>
+            <div className="mono" style={{ fontSize: 10, color: "#3D4658", marginTop: 4 }}>
+              +{fmt(totalMonthly)}/mo
+            </div>
+          </div>
+          {HORIZONS.map((yr) => {
+            const total = totalAt(yr);
+            const invested = totalBalance + totalMonthly * 12 * yr;
+            const gain = total - invested;
+            return (
+              <div key={yr}>
+                <div className="mono" style={{ fontSize: 10, letterSpacing: "0.08em", color: "#6B7686", textTransform: "uppercase", marginBottom: 6 }}>
+                  After {yr} year{yr > 1 ? "s" : ""}
+                </div>
+                <div className="mono" style={{ fontSize: 22, fontWeight: 700, color: ACCENT, textShadow: "0 0 18px rgba(51,214,255,0.4)" }}>
+                  {fmt(total)}
+                </div>
+                <div className="mono" style={{ fontSize: 10, color: gain > 0 ? GREEN : "#3D4658", marginTop: 4 }}>
+                  {gain > 0 ? `+${fmt(gain)} growth` : "—"}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <p style={{ margin: "18px 0 0", fontSize: 11, lineHeight: 1.5, color: "#526075" }}>
+          Compounded monthly on current balances plus recurring contributions, before fees and (outside registered
+          accounts) tax. Rates are illustrative assumptions, not predictions — actual returns vary widely and market
+          assets can lose value. General information only, not personalized financial advice.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ---- Small presentational helpers ----
+
+const ghostBtn = {
+  flexShrink: 0,
+  fontSize: 11,
+  letterSpacing: "0.08em",
+  color: ACCENT,
+  background: "rgba(51,214,255,0.08)",
+  border: "1px solid rgba(51,214,255,0.3)",
+  borderRadius: 2,
+  padding: "8px 12px",
+  cursor: "pointer",
+};
+
+const cardStyle = {
+  position: "relative",
+  background: "rgba(51,214,255,0.03)",
+  border: "1px solid rgba(51,214,255,0.16)",
+  borderRadius: 3,
+  padding: "16px 16px 18px",
+  display: "flex",
+  flexDirection: "column",
+};
+
+const sliderStyle = (frac, color) => ({
+  background: `linear-gradient(to right, ${color} 0%, ${color} ${frac * 100}%, rgba(51,214,255,0.14) ${frac * 100}%, rgba(51,214,255,0.14) 100%)`,
+  "--thumb-color": color,
+});
+
+function Field({ label, color, children }) {
+  return (
+    <div style={{ marginBottom: 6 }}>
+      <div className="mono" style={{ fontSize: 9.5, letterSpacing: "0.08em", color: "#6B7686", textTransform: "uppercase", marginBottom: 5 }}>
+        {label}
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span className="mono" style={{ fontSize: 13, color }}>$</span>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function Stat({ label, value, sub, subColor }) {
+  return (
+    <div style={{ position: "relative", background: "rgba(51,214,255,0.035)", border: "1px solid rgba(51,214,255,0.16)", borderRadius: 3, padding: "12px 14px" }}>
+      <div className="mono" style={{ fontSize: 9.5, letterSpacing: "0.08em", color: "#6B7686", textTransform: "uppercase", marginBottom: 5 }}>
+        {label}
+      </div>
+      <div className="mono" style={{ fontSize: 17, fontWeight: 700, color: "#E7ECF2" }}>{value}</div>
+      {sub && (
+        <div className="mono" style={{ fontSize: 9.5, color: subColor ?? "#3D4658", marginTop: 3 }}>{sub}</div>
+      )}
+    </div>
+  );
+}
+
+function Panel({ title, children, noMargin }) {
+  return (
+    <div style={{ position: "relative", background: "rgba(51,214,255,0.025)", border: "1px solid rgba(51,214,255,0.16)", borderRadius: 3, padding: "16px 18px 18px", marginBottom: noMargin ? 0 : 18 }}>
+      <CornerBrackets size={10} />
+      <div className="mono" style={{ fontSize: 10.5, letterSpacing: "0.12em", color: "#6B7686", textTransform: "uppercase", marginBottom: 14 }}>
+        {title}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function Empty({ children }) {
+  return (
+    <div className="mono" style={{ fontSize: 11.5, color: "#3D4658", padding: "20px 0", textAlign: "center" }}>
+      {children}
+    </div>
+  );
+}
+
+function Toggle({ on, onClick, label }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="mono"
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        fontSize: 10.5,
+        letterSpacing: "0.06em",
+        color: on ? ACCENT : "#6B7686",
+        background: on ? "rgba(51,214,255,0.1)" : "transparent",
+        border: `1px solid ${on ? "rgba(51,214,255,0.35)" : "rgba(51,214,255,0.15)"}`,
+        borderRadius: 2,
+        padding: "7px 12px",
+        cursor: "pointer",
+      }}
+    >
+      <span style={{ width: 7, height: 7, background: on ? ACCENT : "#3D4658", boxShadow: on ? `0 0 6px ${ACCENT}` : "none" }} />
+      {label}
+    </button>
+  );
+}
+
+function StackedAreaChart({ series, max, years }) {
+  const W = 700;
+  const H = 240;
+  const PADL = 54;
+  const PADB = 24;
+  const PADT = 8;
+  const plotW = W - PADL - 8;
+  const plotH = H - PADB - PADT;
+
+  const xAt = (y) => PADL + (y / years) * plotW;
+  const yAt = (v) => PADT + plotH - (v / max) * plotH;
+
+  // Build cumulative bands
+  const cum = Array.from({ length: years + 1 }, () => 0);
+  const bands = series.map((s) => {
+    const lower = [...cum];
+    s.points.forEach((p, i) => (cum[i] += p));
+    const upper = [...cum];
+    return { ...s, lower, upper };
+  });
+
+  const gridVals = [0, 0.25, 0.5, 0.75, 1].map((f) => f * max);
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block" }}>
+      {gridVals.map((v, i) => (
+        <g key={i}>
+          <line x1={PADL} y1={yAt(v)} x2={W - 8} y2={yAt(v)} stroke="rgba(51,214,255,0.12)" strokeWidth={1} />
+          <text x={PADL - 8} y={yAt(v) + 3.5} textAnchor="end" fontSize={9} fill="#3D4658" fontFamily="'JetBrains Mono', monospace">
+            {v >= 1000 ? `${Math.round(v / 1000)}k` : Math.round(v)}
+          </text>
+        </g>
+      ))}
+
+      {bands.map((b) => {
+        const up = b.upper.map((v, i) => `${xAt(i)},${yAt(v)}`).join(" ");
+        const down = [...b.lower].reverse().map((v, i) => `${xAt(years - i)},${yAt(v)}`).join(" ");
+        return (
+          <polygon
+            key={b.name}
+            points={`${up} ${down}`}
+            fill={b.color}
+            fillOpacity={0.55}
+            stroke={b.color}
+            strokeWidth={1.25}
+          />
+        );
+      })}
+
+      {Array.from({ length: years + 1 }, (_, y) => y).filter((y) => y % 2 === 0).map((y) => (
+        <text key={y} x={xAt(y)} y={H - 7} textAnchor="middle" fontSize={9} fill="#3D4658" fontFamily="'JetBrains Mono', monospace">
+          {y}y
+        </text>
+      ))}
+    </svg>
+  );
+}
+
+
+function InfoSection({ title, children, last }) {
+  return (
+    <div style={{ marginBottom: last ? 0 : 16, paddingBottom: last ? 0 : 16, borderBottom: last ? "none" : "1px solid rgba(51,214,255,0.1)" }}>
+      <div className="mono" style={{ fontSize: 10.5, letterSpacing: "0.1em", color: "#6B7686", textTransform: "uppercase", marginBottom: 6 }}>
+        {title}
+      </div>
+      <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.55, color: "#B9C4D6" }}>{children}</p>
+    </div>
+  );
+}
+
+function PieChart({ nodes, hovered, setHovered, onLeftoverActivate }) {
+  const size = 300;
+  const radius = size / 2 - 8;
+  const cx = size / 2;
+  const cy = size / 2;
+
+  const pie = d3
+    .pie()
+    .value((d) => Math.max(d.value, 0.01))
+    .sort(null);
+  const arcGen = d3
+    .arc()
+    .innerRadius(radius * 0.42)
+    .outerRadius(radius)
+    .cornerRadius(1)
+    .padAngle(0.012);
+  const arcHover = d3
+    .arc()
+    .innerRadius(radius * 0.42)
+    .outerRadius(radius + 8)
+    .cornerRadius(1)
+    .padAngle(0.012);
+  const labelArc = d3.arc().innerRadius(radius * 0.72).outerRadius(radius * 0.72);
+
+  const arcs = pie(nodes);
+
+  return (
+    <svg viewBox={`0 0 ${size} ${size}`} style={{ width: size, height: size, display: "block" }}>
+      <defs>
+        {nodes.map((n) => (
+          <radialGradient key={`pie-grad-${n.id}`} id={`pie-grad-${n.id}`} cx="35%" cy="30%" r="80%">
+            <stop offset="0%" stopColor={d3.color(n.color).brighter(0.7)} />
+            <stop offset="100%" stopColor={n.color} />
+          </radialGradient>
+        ))}
+      </defs>
+      <g transform={`translate(${cx},${cy})`}>
+        {arcs.map((a) => {
+          const n = a.data;
+          const isHovered = hovered === n.name;
+          const isLeftover = n.name === LEFTOVER_NAME;
+          return (
+            <path
+              key={n.id}
+              d={isHovered ? arcHover(a) : arcGen(a)}
+              fill={`url(#pie-grad-${n.id})`}
+              stroke="#05070A"
+              strokeWidth={2}
+              opacity={hovered && !isHovered ? 0.55 : 1}
+              style={{ cursor: "pointer", transition: "opacity 0.15s ease" }}
+              onMouseEnter={() => setHovered(n.name)}
+              onMouseLeave={() => setHovered(null)}
+              onDoubleClick={isLeftover ? onLeftoverActivate : undefined}
+            />
+          );
+        })}
+        {arcs.map((a) => {
+          const angle = a.endAngle - a.startAngle;
+          if (angle < 0.12) return null; // too thin to label at all
+          const [lx, ly] = labelArc.centroid(a);
+          const pct = (angle / (2 * Math.PI)) * 100;
+          const showName = angle > 0.22;
+          const n = a.data;
+          const shortName = n.name.length > 16 ? n.name.split(" ")[0] : n.name;
+          return (
+            <g key={`pie-label-${n.id}`} style={{ pointerEvents: "none" }}>
+              {showName && (
+                <text
+                  x={lx}
+                  y={ly - 8}
+                  textAnchor="middle"
+                  fontSize={10}
+                  fontWeight={700}
+                  fill="#05070A"
+                  stroke="#E7ECF2"
+                  strokeWidth={2.5}
+                  paintOrder="stroke"
+                >
+                  {shortName}
+                </text>
+              )}
+              <text
+                x={lx}
+                y={showName ? ly + 7 : ly}
+                textAnchor="middle"
+                fontSize={angle > 0.3 ? 11 : 9.5}
+                fontWeight={700}
+                fill="#05070A"
+                stroke="#E7ECF2"
+                strokeWidth={2.5}
+                paintOrder="stroke"
+                className="mono"
+              >
+                {pct.toFixed(0)}%
+              </text>
+            </g>
+          );
+        })}
+      </g>
+    </svg>
+  );
+}
+
+function CompareRow({ label, then, now, invert = false }) {
+  const delta = now - then;
+  const good = invert ? delta < 0 : delta > 0;
+  const isFlat = Math.abs(delta) < 0.5;
+  const deltaColor = isFlat ? "#6B7686" : good ? "#4FC98A" : "#EC5F5F";
+  const arrow = isFlat ? "—" : delta > 0 ? "▲" : "▼";
+  return (
+    <>
+      <span style={{ color: "#B9C4D6" }}>{label}</span>
+      <span className="mono" style={{ color: "#6B7686", textAlign: "right" }}>{fmt(then)}</span>
+      <span className="mono" style={{ color: "#E7ECF2", fontWeight: 600, textAlign: "right" }}>{fmt(now)}</span>
+      <span className="mono" style={{ color: deltaColor, textAlign: "right" }}>
+        {arrow} {fmt(Math.abs(delta))}
+      </span>
+    </>
+  );
+}
+
+function TrailX({ left, top, width, delay, dur, reverse }) {
+  return (
+    <div
+      style={{
+        position: "absolute",
+        left,
+        top,
+        height: 3,
+        width,
+        marginTop: -1.5,
+        transformOrigin: reverse ? "right center" : "left center",
+        background: reverse
+          ? `linear-gradient(270deg, transparent, ${ACCENT})`
+          : `linear-gradient(90deg, transparent, ${ACCENT})`,
+        boxShadow: `0 0 14px 2px ${ACCENT}, 0 0 38px 6px rgba(51,214,255,0.4)`,
+        opacity: 0,
+        animation: `segDrawX ${dur}s linear ${delay}s forwards, segFade 0.28s ease-out ${delay + dur + 0.42}s forwards`,
+      }}
+    />
+  );
+}
+
+function TrailY({ left, top, height, delay, dur }) {
+  return (
+    <div
+      style={{
+        position: "absolute",
+        left,
+        top,
+        width: 3,
+        height,
+        marginLeft: -1.5,
+        transformOrigin: "bottom center",
+        background: `linear-gradient(0deg, transparent, ${ACCENT})`,
+        boxShadow: `0 0 14px 2px ${ACCENT}, 0 0 38px 6px rgba(51,214,255,0.4)`,
+        opacity: 0,
+        animation: `segDrawY ${dur}s linear ${delay}s forwards, segFade 0.28s ease-out ${delay + dur + 0.42}s forwards`,
+      }}
+    />
+  );
+}
+
+function CornerBrackets({ size = 12, color = ACCENT }) {
+  const base = { position: "absolute", width: size, height: size, pointerEvents: "none" };
+  return (
+    <>
+      <span style={{ ...base, top: -1, left: -1, borderTop: `2px solid ${color}`, borderLeft: `2px solid ${color}` }} />
+      <span style={{ ...base, top: -1, right: -1, borderTop: `2px solid ${color}`, borderRight: `2px solid ${color}` }} />
+      <span style={{ ...base, bottom: -1, left: -1, borderBottom: `2px solid ${color}`, borderLeft: `2px solid ${color}` }} />
+      <span style={{ ...base, bottom: -1, right: -1, borderBottom: `2px solid ${color}`, borderRight: `2px solid ${color}` }} />
+    </>
+  );
+}
+
+function LegendChip({ color, label }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11, color: "#7E8CA3" }} className="mono">
+      <span style={{ width: 8, height: 8, background: color, boxShadow: `0 0 5px ${color}`, flexShrink: 0 }} />
+      <span style={{ textTransform: "uppercase", letterSpacing: "0.05em" }}>{label}</span>
+    </div>
+  );
+}
