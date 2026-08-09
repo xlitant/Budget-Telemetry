@@ -1168,6 +1168,7 @@ function LeftoverOptionsPage({
   const [goal, setGoal] = useState(100000);
   const [loaded, setLoaded] = useState(false);
   const [saveState, setSaveState] = useState("idle");
+  const [expandedAccount, setExpandedAccount] = useState(null);
 
   // Restore any saved holdings on mount.
   useEffect(() => {
@@ -1464,129 +1465,240 @@ function LeftoverOptionsPage({
         )}
       </Panel>
 
-      {/* ---- Per-account cards ---- */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 14 }}>
-        {LEFTOVER_OPTIONS.map((opt) => {
-          const balance = balances[opt.name] ?? 0;
-          const monthly = contribs[opt.name] ?? 0;
-          const targetPct = targets[opt.name] ?? 0;
-          const actualPct = totalBalance > 0 ? (bal(opt) / totalBalance) * 100 : 0;
-          const drift = actualPct - targetPct;
-          const driftDollars = (drift / 100) * totalBalance;
-
-          // Contribution room
-          let roomInfo = null;
-          if (opt.room) {
-            const used = roomUsed[opt.name] ?? 0;
-            const limit =
-              opt.room.type === "income"
-                ? Math.min(grossSalary * opt.room.pct, opt.room.cap)
-                : opt.room.lifetime;
-            const remaining = limit - used;
-            roomInfo = { used, limit, remaining, annual: opt.room.annual };
-          }
-
-          return (
-            <div key={opt.name} style={cardStyle}>
-              <CornerBrackets size={10} color={opt.color} />
-              <div className="mono" style={{ fontSize: 10, letterSpacing: "0.1em", color: opt.color, marginBottom: 8 }}>
-                {opt.tag} · {opt.assetClass}
+      {/* ---- Two-column layout: Input grid + Visualizations ---- */}
+      <div style={{ display: "flex", gap: 18, marginBottom: 18, flexWrap: "wrap" }}>
+        {/* Left column: Compact input grid */}
+        <div style={{ flex: "1 1 100%", minWidth: 0, overflowX: "auto" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(400px, 1fr))", gap: 14 }}>
+            {/* Input Grid Card */}
+            <div style={cardStyle}>
+              <CornerBrackets size={10} color={ACCENT} />
+              <div className="mono" style={{ fontSize: 10, letterSpacing: "0.1em", color: ACCENT, marginBottom: 12 }}>
+                ▸ Quick input for all accounts
               </div>
-              <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 6, color: "#E7ECF2" }}>{opt.name}</div>
-              <p style={{ margin: "0 0 14px", fontSize: 12, lineHeight: 1.5, color: "#9AA6BA" }}>{opt.body}</p>
-
-              <Field label="Current balance" color={opt.color}>
-                <input type="number" min={0} max={ALLOC_MAX} step={100} value={balance} onChange={(e) => setBalance(opt.name, e.target.value)} className="mono alloc-input" />
-              </Field>
-              <input
-                type="range" min={0} max={ALLOC_MAX} step={500} value={balance}
-                onChange={(e) => setBalance(opt.name, e.target.value)}
-                className="cat-slider"
-                style={{ ...sliderStyle(balance / ALLOC_MAX, opt.color), marginBottom: 12 }}
-              />
-
-              <Field label="Monthly contribution" color={opt.color}>
-                <input type="number" min={0} max={CONTRIB_MAX} step={25} value={monthly} onChange={(e) => setContrib(opt.name, e.target.value)} className="mono alloc-input" />
-              </Field>
-              <input
-                type="range" min={0} max={CONTRIB_MAX} step={25} value={monthly}
-                onChange={(e) => setContrib(opt.name, e.target.value)}
-                className="cat-slider"
-                style={{ ...sliderStyle(monthly / CONTRIB_MAX, opt.color), marginBottom: 12 }}
-              />
-
-              {/* Target vs actual drift */}
-              <div style={{ borderTop: "1px solid rgba(51,214,255,0.12)", paddingTop: 10, marginBottom: 10 }}>
-                <div className="mono" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 10, color: "#6B7686", marginBottom: 6 }}>
-                  <span>TARGET %</span>
-                  <input
-                    type="number" min={0} max={100} step={1} value={targetPct}
-                    onChange={(e) => setTarget(opt.name, e.target.value)}
-                    className="mono alloc-input"
-                    style={{ width: 62, flex: "0 0 auto", padding: "4px 6px", fontSize: 11 }}
-                  />
-                </div>
-                {targetPct > 0 && (
-                  <div className="mono" style={{ fontSize: 10.5, color: Math.abs(drift) < 2 ? GREEN : "#FFC145" }}>
-                    {Math.abs(drift) < 2
-                      ? `✓ on target (${actualPct.toFixed(1)}%)`
-                      : drift > 0
-                      ? `▲ ${drift.toFixed(1)}pp over — trim ${fmt(Math.abs(driftDollars))}`
-                      : `▼ ${Math.abs(drift).toFixed(1)}pp under — add ${fmt(Math.abs(driftDollars))}`}
-                  </div>
-                )}
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                  <thead>
+                    <tr style={{ borderBottom: "1px solid rgba(51,214,255,0.2)" }}>
+                      <th style={{ textAlign: "left", padding: "6px 0", color: "#6B7686", fontWeight: 600, fontSize: 10 }}>Account</th>
+                      <th style={{ textAlign: "right", padding: "6px 6px", color: "#6B7686", fontWeight: 600, fontSize: 10 }}>Balance</th>
+                      <th style={{ textAlign: "right", padding: "6px 6px", color: "#6B7686", fontWeight: 600, fontSize: 10 }}>Monthly</th>
+                      <th style={{ textAlign: "right", padding: "6px 6px", color: "#6B7686", fontWeight: 600, fontSize: 10 }}>Target %</th>
+                      <th style={{ textAlign: "center", padding: "6px 0", color: "#6B7686", fontWeight: 600, fontSize: 10 }}>Details</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {LEFTOVER_OPTIONS.map((opt) => {
+                      const balance = balances[opt.name] ?? 0;
+                      const monthly = contribs[opt.name] ?? 0;
+                      const targetPct = targets[opt.name] ?? 0;
+                      return (
+                        <tr key={opt.name} style={{ borderBottom: "1px solid rgba(51,214,255,0.08)", background: expandedAccount === opt.name ? "rgba(51,214,255,0.08)" : "transparent" }}>
+                          <td style={{ padding: "8px 0", color: opt.color, fontWeight: 500 }}>{opt.name}</td>
+                          <td style={{ padding: "8px 6px", textAlign: "right" }}>
+                            <input
+                              type="number" min={0} max={ALLOC_MAX} step={100} value={balance}
+                              onChange={(e) => setBalance(opt.name, e.target.value)}
+                              className="mono"
+                              style={{
+                                width: 70,
+                                fontSize: 11,
+                                padding: "4px 6px",
+                                background: "rgba(51,214,255,0.05)",
+                                border: "1px solid rgba(51,214,255,0.15)",
+                                borderRadius: 2,
+                                color: "#E7ECF2",
+                              }}
+                            />
+                          </td>
+                          <td style={{ padding: "8px 6px", textAlign: "right" }}>
+                            <input
+                              type="number" min={0} max={CONTRIB_MAX} step={25} value={monthly}
+                              onChange={(e) => setContrib(opt.name, e.target.value)}
+                              className="mono"
+                              style={{
+                                width: 65,
+                                fontSize: 11,
+                                padding: "4px 6px",
+                                background: "rgba(51,214,255,0.05)",
+                                border: "1px solid rgba(51,214,255,0.15)",
+                                borderRadius: 2,
+                                color: "#E7ECF2",
+                              }}
+                            />
+                          </td>
+                          <td style={{ padding: "8px 6px", textAlign: "right" }}>
+                            <input
+                              type="number" min={0} max={100} step={1} value={targetPct}
+                              onChange={(e) => setTarget(opt.name, e.target.value)}
+                              className="mono"
+                              style={{
+                                width: 50,
+                                fontSize: 11,
+                                padding: "4px 6px",
+                                background: "rgba(51,214,255,0.05)",
+                                border: "1px solid rgba(51,214,255,0.15)",
+                                borderRadius: 2,
+                                color: "#E7ECF2",
+                              }}
+                            />
+                          </td>
+                          <td style={{ padding: "8px 0", textAlign: "center" }}>
+                            <button
+                              type="button"
+                              onClick={() => setExpandedAccount(expandedAccount === opt.name ? null : opt.name)}
+                              className="mono"
+                              style={{
+                                fontSize: 10,
+                                padding: "4px 6px",
+                                background: "transparent",
+                                color: opt.color,
+                                border: "1px solid rgba(51,214,255,0.3)",
+                                borderRadius: 2,
+                                cursor: "pointer",
+                              }}
+                            >
+                              {expandedAccount === opt.name ? "✕" : "▸"}
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
-
-              {/* Contribution room */}
-              {roomInfo && (
-                <div style={{ borderTop: "1px solid rgba(51,214,255,0.12)", paddingTop: 10, marginBottom: 10 }}>
-                  <div className="mono" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 10, color: "#6B7686", marginBottom: 6 }}>
-                    <span>ROOM USED</span>
-                    <input
-                      type="number" min={0} step={500} value={roomInfo.used}
-                      onChange={(e) => setRoom(opt.name, e.target.value)}
-                      className="mono alloc-input"
-                      style={{ width: 82, flex: "0 0 auto", padding: "4px 6px", fontSize: 11 }}
-                    />
-                  </div>
-                  <div style={{ height: 5, background: "rgba(51,214,255,0.1)", borderRadius: 1, overflow: "hidden", marginBottom: 5 }}>
-                    <div style={{ height: "100%", width: `${Math.min(100, (roomInfo.used / roomInfo.limit) * 100)}%`, background: roomInfo.remaining < 0 ? RED : opt.color }} />
-                  </div>
-                  <div className="mono" style={{ fontSize: 10, color: roomInfo.remaining < 0 ? RED : "#7E8CA3" }}>
-                    {roomInfo.remaining < 0
-                      ? `⚠ over by ${fmt(Math.abs(roomInfo.remaining))} — penalties may apply`
-                      : `${fmt(roomInfo.remaining)} room left of ${fmt(roomInfo.limit)}`}
-                  </div>
-                  <div className="mono" style={{ fontSize: 9.5, color: "#3D4658", marginTop: 3 }}>
-                    {opt.room.type === "income" ? "18% of income, CRA capped" : `${fmt(roomInfo.annual)}/yr`}
-                  </div>
-                </div>
-              )}
-
-              {/* Projections */}
-              <div style={{ borderTop: "1px solid rgba(51,214,255,0.12)", paddingTop: 10 }}>
-                <div className="mono" style={{ fontSize: 9.5, letterSpacing: "0.08em", color: "#6B7686", textTransform: "uppercase", marginBottom: 7 }}>
-                  Projected @ {(effRate(opt) * 100).toFixed(1)}%/yr
-                </div>
-                {HORIZONS.map((yr) => {
-                  const fv = adjust(projectValue(bal(opt), mo(opt), effRate(opt), yr), yr);
-                  const invested = bal(opt) + mo(opt) * 12 * yr;
-                  const gain = fv - invested;
-                  return (
-                    <div key={yr} className="mono" style={{ display: "flex", justifyContent: "space-between", fontSize: 11, padding: "2.5px 0" }}>
-                      <span style={{ color: "#6B7686" }}>{yr}y</span>
-                      <span>
-                        <span style={{ color: "#E7ECF2", fontWeight: 600 }}>{fmt(fv)}</span>
-                        {gain > 0 && <span style={{ color: opt.color, marginLeft: 6 }}>+{fmt(gain)}</span>}
-                      </span>
-                    </div>
-                  );
-                })}
-                <div style={{ fontSize: 9.5, color: "#3D4658", marginTop: 7, lineHeight: 1.4 }}>{opt.rateNote}</div>
-              </div>
+              <div style={{ fontSize: 9, color: "#3D4658", marginTop: 10 }}>Double-click cells to edit. Click details button to see projections and tax room info.</div>
             </div>
-          );
-        })}
+          </div>
+        </div>
+
+        {/* Expanded account details modal */}
+        {expandedAccount && (
+          <div style={{ flex: "1 1 100%", minWidth: 0 }}>
+            {LEFTOVER_OPTIONS.map((opt) => {
+              if (opt.name !== expandedAccount) return null;
+
+              const balance = balances[opt.name] ?? 0;
+              const monthly = contribs[opt.name] ?? 0;
+              const targetPct = targets[opt.name] ?? 0;
+              const actualPct = totalBalance > 0 ? (bal(opt) / totalBalance) * 100 : 0;
+              const drift = actualPct - targetPct;
+              const driftDollars = (drift / 100) * totalBalance;
+
+              let roomInfo = null;
+              if (opt.room) {
+                const used = roomUsed[opt.name] ?? 0;
+                const limit =
+                  opt.room.type === "income"
+                    ? Math.min(grossSalary * opt.room.pct, opt.room.cap)
+                    : opt.room.lifetime;
+                const remaining = limit - used;
+                roomInfo = { used, limit, remaining, annual: opt.room.annual };
+              }
+
+              return (
+                <div key={opt.name} style={cardStyle}>
+                  <CornerBrackets size={10} color={opt.color} />
+                  <div className="mono" style={{ fontSize: 10, letterSpacing: "0.1em", color: opt.color, marginBottom: 8 }}>
+                    {opt.tag} · {opt.assetClass}
+                  </div>
+                  <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 6, color: "#E7ECF2" }}>{opt.name}</div>
+                  <p style={{ margin: "0 0 14px", fontSize: 12, lineHeight: 1.5, color: "#9AA6BA" }}>{opt.body}</p>
+
+                  <Field label="Current balance" color={opt.color}>
+                    <input type="number" min={0} max={ALLOC_MAX} step={100} value={balance} onChange={(e) => setBalance(opt.name, e.target.value)} className="mono alloc-input" />
+                  </Field>
+                  <input
+                    type="range" min={0} max={ALLOC_MAX} step={500} value={balance}
+                    onChange={(e) => setBalance(opt.name, e.target.value)}
+                    className="cat-slider"
+                    style={{ ...sliderStyle(balance / ALLOC_MAX, opt.color), marginBottom: 12 }}
+                  />
+
+                  <Field label="Monthly contribution" color={opt.color}>
+                    <input type="number" min={0} max={CONTRIB_MAX} step={25} value={monthly} onChange={(e) => setContrib(opt.name, e.target.value)} className="mono alloc-input" />
+                  </Field>
+                  <input
+                    type="range" min={0} max={CONTRIB_MAX} step={25} value={monthly}
+                    onChange={(e) => setContrib(opt.name, e.target.value)}
+                    className="cat-slider"
+                    style={{ ...sliderStyle(monthly / CONTRIB_MAX, opt.color), marginBottom: 12 }}
+                  />
+
+                  {/* Target vs actual drift */}
+                  <div style={{ borderTop: "1px solid rgba(51,214,255,0.12)", paddingTop: 10, marginBottom: 10 }}>
+                    <div className="mono" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 10, color: "#6B7686", marginBottom: 6 }}>
+                      <span>TARGET %</span>
+                      <input
+                        type="number" min={0} max={100} step={1} value={targetPct}
+                        onChange={(e) => setTarget(opt.name, e.target.value)}
+                        className="mono alloc-input"
+                        style={{ width: 62, flex: "0 0 auto", padding: "4px 6px", fontSize: 11 }}
+                      />
+                    </div>
+                    {targetPct > 0 && (
+                      <div className="mono" style={{ fontSize: 10.5, color: Math.abs(drift) < 2 ? GREEN : "#FFC145" }}>
+                        {Math.abs(drift) < 2
+                          ? `✓ on target (${actualPct.toFixed(1)}%)`
+                          : drift > 0
+                          ? `▲ ${drift.toFixed(1)}pp over — trim ${fmt(Math.abs(driftDollars))}`
+                          : `▼ ${Math.abs(drift).toFixed(1)}pp under — add ${fmt(Math.abs(driftDollars))}`}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Contribution room */}
+                  {roomInfo && (
+                    <div style={{ borderTop: "1px solid rgba(51,214,255,0.12)", paddingTop: 10, marginBottom: 10 }}>
+                      <div className="mono" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 10, color: "#6B7686", marginBottom: 6 }}>
+                        <span>ROOM USED</span>
+                        <input
+                          type="number" min={0} step={500} value={roomInfo.used}
+                          onChange={(e) => setRoom(opt.name, e.target.value)}
+                          className="mono alloc-input"
+                          style={{ width: 82, flex: "0 0 auto", padding: "4px 6px", fontSize: 11 }}
+                        />
+                      </div>
+                      <div style={{ height: 5, background: "rgba(51,214,255,0.1)", borderRadius: 1, overflow: "hidden", marginBottom: 5 }}>
+                        <div style={{ height: "100%", width: `${Math.min(100, (roomInfo.used / roomInfo.limit) * 100)}%`, background: roomInfo.remaining < 0 ? RED : opt.color }} />
+                      </div>
+                      <div className="mono" style={{ fontSize: 10, color: roomInfo.remaining < 0 ? RED : "#7E8CA3" }}>
+                        {roomInfo.remaining < 0
+                          ? `⚠ over by ${fmt(Math.abs(roomInfo.remaining))} — penalties may apply`
+                          : `${fmt(roomInfo.remaining)} room left of ${fmt(roomInfo.limit)}`}
+                      </div>
+                      <div className="mono" style={{ fontSize: 9.5, color: "#3D4658", marginTop: 3 }}>
+                        {opt.room.type === "income" ? "18% of income, CRA capped" : `${fmt(roomInfo.annual)}/yr`}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Projections */}
+                  <div style={{ borderTop: "1px solid rgba(51,214,255,0.12)", paddingTop: 10 }}>
+                    <div className="mono" style={{ fontSize: 9.5, letterSpacing: "0.08em", color: "#6B7686", textTransform: "uppercase", marginBottom: 7 }}>
+                      Projected @ {(effRate(opt) * 100).toFixed(1)}%/yr
+                    </div>
+                    {HORIZONS.map((yr) => {
+                      const fv = adjust(projectValue(bal(opt), mo(opt), effRate(opt), yr), yr);
+                      const invested = bal(opt) + mo(opt) * 12 * yr;
+                      const gain = fv - invested;
+                      return (
+                        <div key={yr} className="mono" style={{ display: "flex", justifyContent: "space-between", fontSize: 11, padding: "2.5px 0" }}>
+                          <span style={{ color: "#6B7686" }}>{yr}y</span>
+                          <span>
+                            <span style={{ color: "#E7ECF2", fontWeight: 600 }}>{fmt(fv)}</span>
+                            {gain > 0 && <span style={{ color: opt.color, marginLeft: 6 }}>+{fmt(gain)}</span>}
+                          </span>
+                        </div>
+                      );
+                    })}
+                    <div style={{ fontSize: 9.5, color: "#3D4658", marginTop: 7, lineHeight: 1.4 }}>{opt.rateNote}</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* ---- Grand totals ---- */}
@@ -1990,20 +2102,4 @@ function LegendChip({ color, label }) {
     </div>
   );
 }
-
-
-const rootEl = document.getElementById("root");
-ReactDOM.createRoot(rootEl).render(<BudgetVoronoi />);
-const boot = document.getElementById("boot");
-if (boot) boot.remove();
-</script>
-
-<script>
-  if ("serviceWorker" in navigator) {
-    window.addEventListener("load", () => {
-      navigator.serviceWorker.register("sw.js").catch(() => {});
-    });
-  }
-</script>
-</body>
 </html>
