@@ -1170,6 +1170,8 @@ function LeftoverOptionsPage({
   const [saveState, setSaveState] = useState("idle");
   const [expandedAccount, setExpandedAccount] = useState(null);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [snapshots, setSnapshots] = useState([]);
+  const [showSnapshots, setShowSnapshots] = useState(false);
 
   // Restore any saved holdings on mount.
   useEffect(() => {
@@ -1184,6 +1186,7 @@ function LeftoverOptionsPage({
           setRoomUsed(d.roomUsed ?? {});
           setGoal(d.goal ?? 100000);
           setHousehold(d.household ?? false);
+          setSnapshots(d.snapshots ?? []);
         }
       } catch {
         /* nothing saved yet */
@@ -1197,7 +1200,7 @@ function LeftoverOptionsPage({
     try {
       localStorage.setItem(
         STORAGE_KEY,
-        JSON.stringify({ balances, contribs, targets, roomUsed, goal, household })
+        JSON.stringify({ balances, contribs, targets, roomUsed, goal, household, snapshots })
       );
       setSaveState("saved");
       setTimeout(() => setSaveState("idle"), 1800);
@@ -1205,6 +1208,18 @@ function LeftoverOptionsPage({
       setSaveState("error");
       setTimeout(() => setSaveState("idle"), 2400);
     }
+  };
+
+  const recordSnapshot = () => {
+    const newSnapshot = {
+      date: new Date().toISOString(),
+      balances: { ...balances },
+      contribs: { ...contribs },
+      targets: { ...targets },
+      totalBalance: LEFTOVER_OPTIONS.reduce((s, o) => s + ((balances[o.name] ?? 0) * hhMult), 0),
+    };
+    setSnapshots([...snapshots, newSnapshot]);
+    save();
   };
 
   const exportJSON = () => {
@@ -1231,6 +1246,8 @@ function LeftoverOptionsPage({
         setRoomUsed(data.roomUsed ?? {});
         setGoal(data.goal ?? 100000);
         setHousehold(data.household ?? false);
+        const importedSnapshots = data.snapshots ?? [];
+        setSnapshots(importedSnapshots);
         setSaveState("imported");
         setTimeout(() => setSaveState("idle"), 1800);
       } else {
@@ -1376,6 +1393,14 @@ function LeftoverOptionsPage({
           <button type="button" onClick={save} className="mono" style={ghostBtn}>
             {saveState === "saving" ? "SAVING…" : saveState === "saved" ? "✓ SAVED" : saveState === "imported" ? "✓ IMPORTED" : saveState === "error" ? "✕ FAILED" : "⬇ SAVE"}
           </button>
+          <button type="button" onClick={recordSnapshot} className="mono" style={{...ghostBtn, fontSize: 10}} title={`Record current snapshot (${snapshots.length} recorded)`}>
+            ⬤ SNAPSHOT
+          </button>
+          {snapshots.length > 0 && (
+            <button type="button" onClick={() => setShowSnapshots(!showSnapshots)} className="mono" style={{...ghostBtn, fontSize: 10}} title="View recorded snapshots">
+              📊 HISTORY ({snapshots.length})
+            </button>
+          )}
           <div style={{ position: "relative" }}>
             <button type="button" onClick={() => setExportMenuOpen(!exportMenuOpen)} className="mono" style={{...ghostBtn, fontSize: 10}} title="Export holdings data">
               ↓ EXPORT
@@ -1863,6 +1888,52 @@ function LeftoverOptionsPage({
           assets can lose value. General information only, not personalized financial advice.
         </p>
       </div>
+
+      {/* ---- Snapshot history ---- */}
+      {showSnapshots && snapshots.length > 0 && (
+        <div style={{ position: "relative", marginTop: 24, background: "rgba(51,214,255,0.05)", border: "1px solid rgba(51,214,255,0.28)", borderRadius: 3, padding: "20px" }}>
+          <CornerBrackets size={14} />
+          <div className="mono" style={{ fontSize: 11, letterSpacing: "0.14em", color: ACCENT, textTransform: "uppercase", marginBottom: 16 }}>
+            ▸ Performance History · {snapshots.length} snapshot{snapshots.length !== 1 ? "s" : ""}
+          </div>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+              <thead>
+                <tr style={{ borderBottom: "1px solid rgba(51,214,255,0.2)" }}>
+                  <th style={{ textAlign: "left", padding: "8px 0", color: "#6B7686", fontWeight: 600 }}>Date</th>
+                  <th style={{ textAlign: "right", padding: "8px 12px", color: "#6B7686", fontWeight: 600 }}>Total Balance</th>
+                  <th style={{ textAlign: "right", padding: "8px 12px", color: "#6B7686", fontWeight: 600 }}>vs Today</th>
+                  <th style={{ textAlign: "right", padding: "8px 0", color: "#6B7686", fontWeight: 600 }}>% Change</th>
+                </tr>
+              </thead>
+              <tbody>
+                {snapshots.map((snap, idx) => {
+                  const daysAgo = Math.floor((Date.now() - new Date(snap.date).getTime()) / (1000 * 60 * 60 * 24));
+                  const diff = totalBalance - snap.totalBalance;
+                  const pct = snap.totalBalance > 0 ? ((diff / snap.totalBalance) * 100).toFixed(1) : 0;
+                  return (
+                    <tr key={idx} style={{ borderBottom: "1px solid rgba(51,214,255,0.08)" }}>
+                      <td style={{ padding: "8px 0", color: "#9AA6BA" }}>
+                        {new Date(snap.date).toLocaleDateString()} ({daysAgo}d ago)
+                      </td>
+                      <td style={{ padding: "8px 12px", textAlign: "right", color: "#E7ECF2" }}>{fmt(snap.totalBalance)}</td>
+                      <td style={{ padding: "8px 12px", textAlign: "right", color: diff > 0 ? GREEN : "#FF5470" }}>
+                        {diff > 0 ? "+" : ""}{fmt(diff)}
+                      </td>
+                      <td style={{ padding: "8px 0", textAlign: "right", color: pct > 0 ? GREEN : "#FF5470" }}>
+                        {pct > 0 ? "+" : ""}{pct}%
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ fontSize: 9, color: "#3D4658", marginTop: 10 }}>
+            Snapshots are recorded manually or on import. Track performance over time to validate your projections.
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,5 +1,5 @@
 // Bump this version string whenever you edit index.html so phones pick up the change.
-const CACHE = "budget-telemetry-v9";
+const CACHE = "budget-telemetry-v10";
 
 const ASSETS = [
   "./",
