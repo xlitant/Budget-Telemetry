@@ -1172,6 +1172,9 @@ function LeftoverOptionsPage({
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [snapshots, setSnapshots] = useState([]);
   const [showSnapshots, setShowSnapshots] = useState(false);
+  const [goals, setGoals] = useState([{ name: "Retirement", target: 500000, accounts: ["RRSP", "TFSA"], deadline: null }]);
+  const [incomeSources, setIncomeSources] = useState([{ name: "Salary", annual: grossSalary, type: "salary" }]);
+  const [showSettings, setShowSettings] = useState(false);
 
   // Restore any saved holdings on mount.
   useEffect(() => {
@@ -1184,9 +1187,21 @@ function LeftoverOptionsPage({
           setContribs(d.contribs ?? {});
           setTargets(d.targets ?? {});
           setRoomUsed(d.roomUsed ?? {});
-          setGoal(d.goal ?? 100000);
           setHousehold(d.household ?? false);
           setSnapshots(d.snapshots ?? []);
+          // Migrate old single goal to new goals array
+          if (d.goals) {
+            setGoals(d.goals);
+          } else if (d.goal) {
+            setGoals([{ name: "Retirement", target: d.goal, accounts: ["RRSP", "TFSA"], deadline: null }]);
+          }
+          // Migrate old single salary to new income sources array
+          if (d.incomeSources) {
+            setIncomeSources(d.incomeSources);
+          } else if (d.grossSalary) {
+            setIncomeSources([{ name: "Salary", annual: d.grossSalary, type: "salary" }]);
+          }
+          setGoal(d.goal ?? 100000);
         }
       } catch {
         /* nothing saved yet */
@@ -1195,12 +1210,14 @@ function LeftoverOptionsPage({
     })();
   }, []);
 
+  const totalAnnualIncome = incomeSources.reduce((sum, src) => sum + (src.annual ?? 0), 0);
+
   const save = async () => {
     setSaveState("saving");
     try {
       localStorage.setItem(
         STORAGE_KEY,
-        JSON.stringify({ balances, contribs, targets, roomUsed, goal, household, snapshots })
+        JSON.stringify({ balances, contribs, targets, roomUsed, goal, household, snapshots, goals, incomeSources })
       );
       setSaveState("saved");
       setTimeout(() => setSaveState("idle"), 1800);
@@ -1222,8 +1239,38 @@ function LeftoverOptionsPage({
     save();
   };
 
+  const addGoal = () => {
+    setGoals([...goals, { name: `Goal ${goals.length + 1}`, target: 100000, accounts: ["RRSP"], deadline: null }]);
+  };
+
+  const updateGoal = (idx, field, value) => {
+    const newGoals = [...goals];
+    newGoals[idx] = { ...newGoals[idx], [field]: value };
+    setGoals(newGoals);
+  };
+
+  const deleteGoal = (idx) => {
+    setGoals(goals.filter((_, i) => i !== idx));
+  };
+
+  const addIncomeSource = () => {
+    setIncomeSources([...incomeSources, { name: `Income ${incomeSources.length + 1}`, annual: 50000, type: "salary" }]);
+  };
+
+  const updateIncomeSource = (idx, field, value) => {
+    const newSources = [...incomeSources];
+    newSources[idx] = { ...newSources[idx], [field]: value };
+    setIncomeSources(newSources);
+  };
+
+  const deleteIncomeSource = (idx) => {
+    if (incomeSources.length > 1) {
+      setIncomeSources(incomeSources.filter((_, i) => i !== idx));
+    }
+  };
+
   const exportJSON = () => {
-    const data = { balances, contribs, targets, roomUsed, goal, household, exportedAt: new Date().toISOString() };
+    const data = { balances, contribs, targets, roomUsed, goal, household, exportedAt: new Date().toISOString(), goals, incomeSources, snapshots };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -1248,6 +1295,8 @@ function LeftoverOptionsPage({
         setHousehold(data.household ?? false);
         const importedSnapshots = data.snapshots ?? [];
         setSnapshots(importedSnapshots);
+        if (data.goals) setGoals(data.goals);
+        if (data.incomeSources) setIncomeSources(data.incomeSources);
         setSaveState("imported");
         setTimeout(() => setSaveState("idle"), 1800);
       } else {
@@ -1389,21 +1438,21 @@ function LeftoverOptionsPage({
           </h1>
         </div>
 
-        <div style={{ display: "flex", gap: 8, flexShrink: 0, position: "relative" }}>
-          <button type="button" onClick={save} className="mono" style={ghostBtn}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "clamp(4px, 1vw, 8px)", flexShrink: 0, position: "relative", justifyContent: "flex-end" }}>
+          <button type="button" onClick={save} className="mono" style={{...ghostBtn, fontSize: "clamp(9px, 2vw, 11px)", padding: "clamp(6px, 1.5vw, 8px) clamp(8px, 2vw, 12px)"}}>
             {saveState === "saving" ? "SAVING…" : saveState === "saved" ? "✓ SAVED" : saveState === "imported" ? "✓ IMPORTED" : saveState === "error" ? "✕ FAILED" : "⬇ SAVE"}
           </button>
-          <button type="button" onClick={recordSnapshot} className="mono" style={{...ghostBtn, fontSize: 10}} title={`Record current snapshot (${snapshots.length} recorded)`}>
-            ⬤ SNAPSHOT
+          <button type="button" onClick={recordSnapshot} className="mono" style={{...ghostBtn, fontSize: "clamp(8px, 2vw, 10px)", padding: "clamp(6px, 1.5vw, 8px) clamp(8px, 2vw, 12px)"}} title={`Record snapshot (${snapshots.length})`}>
+            ⬤ SNAP
           </button>
           {snapshots.length > 0 && (
-            <button type="button" onClick={() => setShowSnapshots(!showSnapshots)} className="mono" style={{...ghostBtn, fontSize: 10}} title="View recorded snapshots">
-              📊 HISTORY ({snapshots.length})
+            <button type="button" onClick={() => setShowSnapshots(!showSnapshots)} className="mono" style={{...ghostBtn, fontSize: "clamp(8px, 2vw, 10px)", padding: "clamp(6px, 1.5vw, 8px) clamp(8px, 2vw, 12px)"}} title="View history">
+              📊 {snapshots.length}
             </button>
           )}
           <div style={{ position: "relative" }}>
-            <button type="button" onClick={() => setExportMenuOpen(!exportMenuOpen)} className="mono" style={{...ghostBtn, fontSize: 10}} title="Export holdings data">
-              ↓ EXPORT
+            <button type="button" onClick={() => setExportMenuOpen(!exportMenuOpen)} className="mono" style={{...ghostBtn, fontSize: "clamp(8px, 2vw, 10px)", padding: "clamp(6px, 1.5vw, 8px) clamp(8px, 2vw, 12px)"}} title="Export data">
+              ↓ EXP
             </button>
             {exportMenuOpen && (
               <div style={{
@@ -1447,10 +1496,13 @@ function LeftoverOptionsPage({
               </div>
             )}
           </div>
-          <button type="button" onClick={handleImportClick} className="mono" style={{...ghostBtn, fontSize: 10}} title="Upload holdings from JSON file">
-            ↑ IMPORT
+          <button type="button" onClick={handleImportClick} className="mono" style={{...ghostBtn, fontSize: "clamp(8px, 2vw, 10px)", padding: "clamp(6px, 1.5vw, 8px) clamp(8px, 2vw, 12px)"}} title="Import data">
+            ↑ IMP
           </button>
-          <button type="button" onClick={onBack} className="mono" style={ghostBtn}>
+          <button type="button" onClick={() => setShowSettings(!showSettings)} className="mono" style={{...ghostBtn, fontSize: "clamp(8px, 2vw, 10px)", padding: "clamp(6px, 1.5vw, 8px) clamp(8px, 2vw, 12px)"}} title="Manage goals & income">
+            ⚙ SET
+          </button>
+          <button type="button" onClick={onBack} className="mono" style={{...ghostBtn, fontSize: "clamp(9px, 2vw, 11px)", padding: "clamp(6px, 1.5vw, 8px) clamp(8px, 2vw, 12px)"}}>
             ◂ BACK
           </button>
         </div>
@@ -1502,18 +1554,82 @@ function LeftoverOptionsPage({
         </span>
       </div>
 
+      {/* ---- Settings: Goals & Income Sources ---- */}
+      {showSettings && (
+        <div style={{ background: "rgba(51,214,255,0.08)", border: "1px solid rgba(51,214,255,0.2)", borderRadius: 3, padding: "16px", marginBottom: 18, overflowX: "auto" }}>
+          <div className="mono" style={{ fontSize: 11, letterSpacing: "0.14em", color: ACCENT, textTransform: "uppercase", marginBottom: 14 }}>
+            ⚙ Goals & Income Settings
+          </div>
+
+          <div style={{ marginBottom: 18 }}>
+            <div className="mono" style={{ fontSize: 10, letterSpacing: "0.1em", color: "#9AA6BA", textTransform: "uppercase", marginBottom: 10 }}>
+              ▸ Financial Goals ({goals.length})
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 10, marginBottom: 10 }}>
+              {goals.map((g, idx) => (
+                <div key={idx} style={{ background: "rgba(51,214,255,0.05)", border: "1px solid rgba(51,214,255,0.15)", borderRadius: 2, padding: 10 }}>
+                  <input type="text" value={g.name} onChange={(e) => updateGoal(idx, "name", e.target.value)} placeholder="Goal name" className="mono" style={{ display: "block", width: "100%", marginBottom: 8, padding: "6px", fontSize: 11, background: "rgba(51,214,255,0.05)", border: "1px solid rgba(51,214,255,0.15)", borderRadius: 2, color: "#E7ECF2" }} />
+                  <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                    <div style={{ flex: 1 }}>
+                      <label className="mono" style={{ fontSize: 9, color: "#6B7686" }}>Target</label>
+                      <input type="number" value={g.target} onChange={(e) => updateGoal(idx, "target", Number(e.target.value) || 0)} min="0" step="10000" className="mono" style={{ display: "block", width: "100%", padding: "4px", fontSize: 10, background: "rgba(51,214,255,0.05)", border: "1px solid rgba(51,214,255,0.15)", borderRadius: 2, color: "#E7ECF2" }} />
+                    </div>
+                    {goals.length > 1 && (
+                      <button type="button" onClick={() => deleteGoal(idx)} className="mono" style={{ alignSelf: "flex-end", padding: "4px 8px", fontSize: 9, background: "#FF5470", border: "none", borderRadius: 2, color: "#05070A", cursor: "pointer", fontWeight: 600 }}>
+                        ✕
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <button type="button" onClick={addGoal} className="mono" style={{ ...ghostBtn, fontSize: 10, padding: "6px 12px" }}>
+              + Add Goal
+            </button>
+          </div>
+
+          <div>
+            <div className="mono" style={{ fontSize: 10, letterSpacing: "0.1em", color: "#9AA6BA", textTransform: "uppercase", marginBottom: 10 }}>
+              ▸ Income Sources ({incomeSources.length})
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 10, marginBottom: 10 }}>
+              {incomeSources.map((src, idx) => (
+                <div key={idx} style={{ background: "rgba(51,214,255,0.05)", border: "1px solid rgba(51,214,255,0.15)", borderRadius: 2, padding: 10 }}>
+                  <input type="text" value={src.name} onChange={(e) => updateIncomeSource(idx, "name", e.target.value)} placeholder="Income name" className="mono" style={{ display: "block", width: "100%", marginBottom: 8, padding: "6px", fontSize: 11, background: "rgba(51,214,255,0.05)", border: "1px solid rgba(51,214,255,0.15)", borderRadius: 2, color: "#E7ECF2" }} />
+                  <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                    <div style={{ flex: 1 }}>
+                      <label className="mono" style={{ fontSize: 9, color: "#6B7686" }}>Annual</label>
+                      <input type="number" value={src.annual} onChange={(e) => updateIncomeSource(idx, "annual", Number(e.target.value) || 0)} min="0" step="10000" className="mono" style={{ display: "block", width: "100%", padding: "4px", fontSize: 10, background: "rgba(51,214,255,0.05)", border: "1px solid rgba(51,214,255,0.15)", borderRadius: 2, color: "#E7ECF2" }} />
+                    </div>
+                    {incomeSources.length > 1 && (
+                      <button type="button" onClick={() => deleteIncomeSource(idx)} className="mono" style={{ alignSelf: "flex-end", padding: "4px 8px", fontSize: 9, background: "#FF5470", border: "none", borderRadius: 2, color: "#05070A", cursor: "pointer", fontWeight: 600 }}>
+                        ✕
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <button type="button" onClick={addIncomeSource} className="mono" style={{ ...ghostBtn, fontSize: 10, padding: "6px 12px" }}>
+              + Add Income
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ---- Summary strip ---- */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginBottom: 18 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: "clamp(8px, 2vw, 12px)", marginBottom: 18 }}>
         <Stat label="Total holdings" value={fmt(totalBalance)} />
-        <Stat label="Monthly in" value={fmt(totalMonthly)} sub={`${fmt(Math.abs(contribRemaining))} ${contribRemaining >= 0 ? "unallocated" : "over leftover"}`} subColor={contribRemaining >= 0 ? GREEN : RED} />
-        <Stat label="Blended rate" value={`${(blendedRate * 100).toFixed(2)}%`} sub={`${scen.label.toLowerCase()} case`} subColor={scen.color} />
+        <Stat label="Annual income" value={fmt(totalAnnualIncome)} sub={`${incomeSources.length} source${incomeSources.length !== 1 ? "s" : ""}`} />
+        <Stat label="Monthly in" value={fmt(totalMonthly)} sub={`${fmt(Math.abs(contribRemaining))} ${contribRemaining >= 0 ? "unal." : "over"}`} subColor={contribRemaining >= 0 ? GREEN : RED} />
+        <Stat label="Blended rate" value={`${(blendedRate * 100).toFixed(2)}%`} sub={`${scen.label.toLowerCase()}`} subColor={scen.color} />
         <Stat
           label="Emergency runway"
-          value={`${runwayMonths.toFixed(1)} mo`}
-          sub={runwayMonths >= 3 ? "3–6 mo target met" : "below 3 mo target"}
+          value={`${runwayMonths.toFixed(1)}mo`}
+          sub={runwayMonths >= 3 ? "✓ target met" : "⚠ low"}
           subColor={runwayMonths >= 3 ? GREEN : RED}
         />
-        <Stat label="Growth / defensive" value={`${growthPct.toFixed(0)} / ${(100 - growthPct).toFixed(0)}`} sub="equity vs. ballast" />
+        <Stat label="Growth/def" value={`${growthPct.toFixed(0)}/${(100 - growthPct).toFixed(0)}`} sub="equity/ballast" />
       </div>
 
       {/* ---- Stacked projection chart ---- */}
