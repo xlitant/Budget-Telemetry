@@ -1277,6 +1277,7 @@ function LeftoverOptionsPage({
     URL.revokeObjectURL(url);
   };
 
+
   const hhMult = household ? 2 : 1;
   const num = (raw, max) => Math.min(max, Math.max(0, Number(raw) || 0));
   const setBalance = (k, v) => setBalances((p) => ({ ...p, [k]: num(v, ALLOC_MAX) }));
