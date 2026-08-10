@@ -1169,6 +1169,7 @@ function LeftoverOptionsPage({
   const [loaded, setLoaded] = useState(false);
   const [saveState, setSaveState] = useState("idle");
   const [expandedAccount, setExpandedAccount] = useState(null);
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
 
   // Restore any saved holdings on mount.
   useEffect(() => {
@@ -1204,6 +1205,76 @@ function LeftoverOptionsPage({
       setSaveState("error");
       setTimeout(() => setSaveState("idle"), 2400);
     }
+  };
+
+  const exportJSON = () => {
+    const data = { balances, contribs, targets, roomUsed, goal, household, exportedAt: new Date().toISOString() };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `holdings_${new Date().toISOString().split("T")[0]}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const importJSON = async (file) => {
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+      if (data.balances !== undefined && data.contribs !== undefined) {
+        setBalances(data.balances ?? {});
+        setContribs(data.contribs ?? {});
+        setTargets(data.targets ?? {});
+        setRoomUsed(data.roomUsed ?? {});
+        setGoal(data.goal ?? 100000);
+        setHousehold(data.household ?? false);
+        setSaveState("imported");
+        setTimeout(() => setSaveState("idle"), 1800);
+      } else {
+        setSaveState("error");
+        setTimeout(() => setSaveState("idle"), 2400);
+      }
+    } catch {
+      setSaveState("error");
+      setTimeout(() => setSaveState("idle"), 2400);
+    }
+  };
+
+  const handleImportClick = () => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".json";
+    input.onchange = (e) => {
+      const file = e.target.files?.[0];
+      if (file) importJSON(file);
+    };
+    input.click();
+  };
+
+  const exportCSV = () => {
+    const rows = [["Account", "Balance", "Monthly Contribution", "Target %", "Room Used"]];
+    LEFTOVER_OPTIONS.forEach((opt) => {
+      rows.push([
+        opt.name,
+        balances[opt.name] ?? 0,
+        contribs[opt.name] ?? 0,
+        targets[opt.name] ?? 0,
+        roomUsed[opt.name] ?? 0,
+      ]);
+    });
+    const csv = rows.map((r) => r.map((v) => `"${v}"`).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `holdings_${new Date().toISOString().split("T")[0]}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   const hhMult = household ? 2 : 1;
@@ -1300,9 +1371,58 @@ function LeftoverOptionsPage({
           </h1>
         </div>
 
-        <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+        <div style={{ display: "flex", gap: 8, flexShrink: 0, position: "relative" }}>
           <button type="button" onClick={save} className="mono" style={ghostBtn}>
-            {saveState === "saving" ? "SAVING…" : saveState === "saved" ? "✓ SAVED" : saveState === "error" ? "✕ FAILED" : "⬇ SAVE"}
+            {saveState === "saving" ? "SAVING…" : saveState === "saved" ? "✓ SAVED" : saveState === "imported" ? "✓ IMPORTED" : saveState === "error" ? "✕ FAILED" : "⬇ SAVE"}
+          </button>
+          <div style={{ position: "relative" }}>
+            <button type="button" onClick={() => setExportMenuOpen(!exportMenuOpen)} className="mono" style={{...ghostBtn, fontSize: 10}} title="Export holdings data">
+              ↓ EXPORT
+            </button>
+            {exportMenuOpen && (
+              <div style={{
+                position: "absolute",
+                top: "100%",
+                right: 0,
+                marginTop: 4,
+                background: "rgba(15,23,42,0.95)",
+                border: "1px solid rgba(51,214,255,0.3)",
+                borderRadius: 2,
+                zIndex: 1000,
+                minWidth: 140,
+              }}>
+                <button type="button" onClick={() => { exportJSON(); setExportMenuOpen(false); }} className="mono" style={{
+                  display: "block",
+                  width: "100%",
+                  padding: "8px 12px",
+                  textAlign: "left",
+                  fontSize: 10,
+                  background: "transparent",
+                  color: ACCENT,
+                  border: "none",
+                  borderBottom: "1px solid rgba(51,214,255,0.1)",
+                  cursor: "pointer",
+                }}>
+                  JSON (full data)
+                </button>
+                <button type="button" onClick={() => { exportCSV(); setExportMenuOpen(false); }} className="mono" style={{
+                  display: "block",
+                  width: "100%",
+                  padding: "8px 12px",
+                  textAlign: "left",
+                  fontSize: 10,
+                  background: "transparent",
+                  color: ACCENT,
+                  border: "none",
+                  cursor: "pointer",
+                }}>
+                  CSV (spreadsheet)
+                </button>
+              </div>
+            )}
+          </div>
+          <button type="button" onClick={handleImportClick} className="mono" style={{...ghostBtn, fontSize: 10}} title="Upload holdings from JSON file">
+            ↑ IMPORT
           </button>
           <button type="button" onClick={onBack} className="mono" style={ghostBtn}>
             ◂ BACK
