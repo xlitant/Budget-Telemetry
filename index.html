@@ -1738,15 +1738,15 @@ function LeftoverOptionsPage({
               <div className="mono" style={{ fontSize: 10, letterSpacing: "0.1em", color: ACCENT, marginBottom: 12 }}>
                 ▸ Quick input for all accounts
               </div>
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+              <div style={{ overflowX: "auto", margin: "0 -14px -14px -14px" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "clamp(9px, 2vw, 11px)", minWidth: 340 }}>
                   <thead>
                     <tr style={{ borderBottom: "1px solid rgba(51,214,255,0.2)" }}>
-                      <th style={{ textAlign: "left", padding: "6px 0", color: "#6B7686", fontWeight: 600, fontSize: 10 }}>Account</th>
-                      <th style={{ textAlign: "right", padding: "6px 6px", color: "#6B7686", fontWeight: 600, fontSize: 10 }}>Balance</th>
-                      <th style={{ textAlign: "right", padding: "6px 6px", color: "#6B7686", fontWeight: 600, fontSize: 10 }}>Monthly</th>
-                      <th style={{ textAlign: "right", padding: "6px 6px", color: "#6B7686", fontWeight: 600, fontSize: 10 }}>Target %</th>
-                      <th style={{ textAlign: "center", padding: "6px 0", color: "#6B7686", fontWeight: 600, fontSize: 10 }}>Details</th>
+                      <th style={{ textAlign: "left", padding: "clamp(5px, 1vw, 6px) 0", color: "#6B7686", fontWeight: 600, fontSize: "clamp(9px, 1.8vw, 10px)" }}>Account</th>
+                      <th style={{ textAlign: "right", padding: "clamp(5px, 1vw, 6px)", color: "#6B7686", fontWeight: 600, fontSize: "clamp(8px, 1.8vw, 10px)" }}>Bal</th>
+                      <th style={{ textAlign: "right", padding: "clamp(5px, 1vw, 6px)", color: "#6B7686", fontWeight: 600, fontSize: "clamp(8px, 1.8vw, 10px)" }}>Mo</th>
+                      <th style={{ textAlign: "right", padding: "clamp(5px, 1vw, 6px)", color: "#6B7686", fontWeight: 600, fontSize: "clamp(8px, 1.8vw, 10px)" }}>%</th>
+                      <th style={{ textAlign: "center", padding: "clamp(5px, 1vw, 6px) 0", color: "#6B7686", fontWeight: 600, fontSize: "clamp(8px, 1.8vw, 10px)" }}>⋮</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1756,16 +1756,16 @@ function LeftoverOptionsPage({
                       const targetPct = targets[opt.name] ?? 0;
                       return (
                         <tr key={opt.name} style={{ borderBottom: "1px solid rgba(51,214,255,0.08)", background: expandedAccount === opt.name ? "rgba(51,214,255,0.08)" : "transparent" }}>
-                          <td style={{ padding: "8px 0", color: opt.color, fontWeight: 500 }}>{opt.name}</td>
-                          <td style={{ padding: "8px 6px", textAlign: "right" }}>
+                          <td style={{ padding: "clamp(6px, 1.5vw, 8px) 0", color: opt.color, fontWeight: 500, fontSize: "clamp(10px, 2vw, 11px)" }}>{opt.name}</td>
+                          <td style={{ padding: "clamp(6px, 1.5vw, 8px)", textAlign: "right" }}>
                             <input
                               type="number" min={0} max={ALLOC_MAX} step={100} value={balance}
                               onChange={(e) => setBalance(opt.name, e.target.value)}
                               className="mono"
                               style={{
-                                width: 70,
-                                fontSize: 11,
-                                padding: "4px 6px",
+                                width: "clamp(50px, 15vw, 70px)",
+                                fontSize: "clamp(9px, 2vw, 11px)",
+                                padding: "clamp(3px, 0.8vw, 4px) clamp(4px, 1vw, 6px)",
                                 background: "rgba(51,214,255,0.05)",
                                 border: "1px solid rgba(51,214,255,0.15)",
                                 borderRadius: 2,
@@ -1773,15 +1773,15 @@ function LeftoverOptionsPage({
                               }}
                             />
                           </td>
-                          <td style={{ padding: "8px 6px", textAlign: "right" }}>
+                          <td style={{ padding: "clamp(6px, 1.5vw, 8px)", textAlign: "right" }}>
                             <input
                               type="number" min={0} max={CONTRIB_MAX} step={25} value={monthly}
                               onChange={(e) => setContrib(opt.name, e.target.value)}
                               className="mono"
                               style={{
-                                width: 65,
-                                fontSize: 11,
-                                padding: "4px 6px",
+                                width: "clamp(45px, 12vw, 65px)",
+                                fontSize: "clamp(9px, 2vw, 11px)",
+                                padding: "clamp(3px, 0.8vw, 4px) clamp(4px, 1vw, 6px)",
                                 background: "rgba(51,214,255,0.05)",
                                 border: "1px solid rgba(51,214,255,0.15)",
                                 borderRadius: 2,
@@ -1789,15 +1789,15 @@ function LeftoverOptionsPage({
                               }}
                             />
                           </td>
-                          <td style={{ padding: "8px 6px", textAlign: "right" }}>
+                          <td style={{ padding: "clamp(6px, 1.5vw, 8px)", textAlign: "right" }}>
                             <input
                               type="number" min={0} max={100} step={1} value={targetPct}
                               onChange={(e) => setTarget(opt.name, e.target.value)}
                               className="mono"
                               style={{
-                                width: 50,
-                                fontSize: 11,
-                                padding: "4px 6px",
+                                width: "clamp(35px, 10vw, 50px)",
+                                fontSize: "clamp(9px, 2vw, 11px)",
+                                padding: "clamp(3px, 0.8vw, 4px) clamp(4px, 1vw, 6px)",
                                 background: "rgba(51,214,255,0.05)",
                                 border: "1px solid rgba(51,214,255,0.15)",
                                 borderRadius: 2,
@@ -1805,14 +1805,14 @@ function LeftoverOptionsPage({
                               }}
                             />
                           </td>
-                          <td style={{ padding: "8px 0", textAlign: "center" }}>
+                          <td style={{ padding: "clamp(6px, 1.5vw, 8px) 0", textAlign: "center" }}>
                             <button
                               type="button"
                               onClick={() => setExpandedAccount(expandedAccount === opt.name ? null : opt.name)}
                               className="mono"
                               style={{
-                                fontSize: 10,
-                                padding: "4px 6px",
+                                fontSize: "clamp(8px, 2vw, 10px)",
+                                padding: "clamp(3px, 0.8vw, 4px) clamp(4px, 1vw, 6px)",
                                 background: "transparent",
                                 color: opt.color,
                                 border: "1px solid rgba(51,214,255,0.3)",
@@ -1829,7 +1829,7 @@ function LeftoverOptionsPage({
                   </tbody>
                 </table>
               </div>
-              <div style={{ fontSize: 9, color: "#3D4658", marginTop: 10 }}>Double-click cells to edit. Click details button to see projections and tax room info.</div>
+              <div style={{ fontSize: "clamp(8px, 1.5vw, 9px)", color: "#3D4658", marginTop: 10, lineHeight: 1.4 }}>Click ▸ button to expand account details with projections and tax room.</div>
             </div>
           </div>
         </div>
@@ -2007,19 +2007,19 @@ function LeftoverOptionsPage({
 
       {/* ---- Snapshot history ---- */}
       {showSnapshots && snapshots.length > 0 && (
-        <div style={{ position: "relative", marginTop: 24, background: "rgba(51,214,255,0.05)", border: "1px solid rgba(51,214,255,0.28)", borderRadius: 3, padding: "20px" }}>
+        <div style={{ position: "relative", marginTop: 24, background: "rgba(51,214,255,0.05)", border: "1px solid rgba(51,214,255,0.28)", borderRadius: 3, padding: "clamp(12px, 3vw, 20px)" }}>
           <CornerBrackets size={14} />
-          <div className="mono" style={{ fontSize: 11, letterSpacing: "0.14em", color: ACCENT, textTransform: "uppercase", marginBottom: 16 }}>
+          <div className="mono" style={{ fontSize: "clamp(10px, 2vw, 11px)", letterSpacing: "0.14em", color: ACCENT, textTransform: "uppercase", marginBottom: 12 }}>
             ▸ Performance History · {snapshots.length} snapshot{snapshots.length !== 1 ? "s" : ""}
           </div>
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+          <div style={{ overflowX: "auto", margin: "0 -clamp(8px, 2vw, 12px)" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "clamp(9px, 2vw, 11px)", minWidth: 320 }}>
               <thead>
                 <tr style={{ borderBottom: "1px solid rgba(51,214,255,0.2)" }}>
-                  <th style={{ textAlign: "left", padding: "8px 0", color: "#6B7686", fontWeight: 600 }}>Date</th>
-                  <th style={{ textAlign: "right", padding: "8px 12px", color: "#6B7686", fontWeight: 600 }}>Total Balance</th>
-                  <th style={{ textAlign: "right", padding: "8px 12px", color: "#6B7686", fontWeight: 600 }}>vs Today</th>
-                  <th style={{ textAlign: "right", padding: "8px 0", color: "#6B7686", fontWeight: 600 }}>% Change</th>
+                  <th style={{ textAlign: "left", padding: "clamp(6px, 1.5vw, 8px) clamp(6px, 1vw, 12px)", color: "#6B7686", fontWeight: 600 }}>Date</th>
+                  <th style={{ textAlign: "right", padding: "clamp(6px, 1.5vw, 8px) clamp(6px, 1vw, 12px)", color: "#6B7686", fontWeight: 600 }}>Balance</th>
+                  <th style={{ textAlign: "right", padding: "clamp(6px, 1.5vw, 8px) clamp(6px, 1vw, 12px)", color: "#6B7686", fontWeight: 600 }}>Δ</th>
+                  <th style={{ textAlign: "right", padding: "clamp(6px, 1.5vw, 8px) clamp(6px, 1vw, 12px)", color: "#6B7686", fontWeight: 600 }}>%</th>
                 </tr>
               </thead>
               <tbody>
@@ -2029,14 +2029,14 @@ function LeftoverOptionsPage({
                   const pct = snap.totalBalance > 0 ? ((diff / snap.totalBalance) * 100).toFixed(1) : 0;
                   return (
                     <tr key={idx} style={{ borderBottom: "1px solid rgba(51,214,255,0.08)" }}>
-                      <td style={{ padding: "8px 0", color: "#9AA6BA" }}>
-                        {new Date(snap.date).toLocaleDateString()} ({daysAgo}d ago)
+                      <td style={{ padding: "clamp(6px, 1.5vw, 8px) clamp(6px, 1vw, 12px)", color: "#9AA6BA", whiteSpace: "nowrap" }}>
+                        {new Date(snap.date).toLocaleDateString("en-US", {month:"short", day:"2-digit"})} ({daysAgo}d)
                       </td>
-                      <td style={{ padding: "8px 12px", textAlign: "right", color: "#E7ECF2" }}>{fmt(snap.totalBalance)}</td>
-                      <td style={{ padding: "8px 12px", textAlign: "right", color: diff > 0 ? GREEN : "#FF5470" }}>
-                        {diff > 0 ? "+" : ""}{fmt(diff)}
+                      <td style={{ padding: "clamp(6px, 1.5vw, 8px) clamp(6px, 1vw, 12px)", textAlign: "right", color: "#E7ECF2" }}>{fmt(snap.totalBalance)}</td>
+                      <td style={{ padding: "clamp(6px, 1.5vw, 8px) clamp(6px, 1vw, 12px)", textAlign: "right", color: diff > 0 ? GREEN : "#FF5470", whiteSpace: "nowrap" }}>
+                        {diff > 0 ? "+" : ""}{fmt(Math.abs(diff))}
                       </td>
-                      <td style={{ padding: "8px 0", textAlign: "right", color: pct > 0 ? GREEN : "#FF5470" }}>
+                      <td style={{ padding: "clamp(6px, 1.5vw, 8px) clamp(6px, 1vw, 12px)", textAlign: "right", color: pct > 0 ? GREEN : "#FF5470" }}>
                         {pct > 0 ? "+" : ""}{pct}%
                       </td>
                     </tr>
@@ -2045,8 +2045,8 @@ function LeftoverOptionsPage({
               </tbody>
             </table>
           </div>
-          <div style={{ fontSize: 9, color: "#3D4658", marginTop: 10 }}>
-            Snapshots are recorded manually or on import. Track performance over time to validate your projections.
+          <div style={{ fontSize: "clamp(8px, 1.5vw, 9px)", color: "#3D4658", marginTop: 8 }}>
+            Track performance over time to validate your projections.
           </div>
         </div>
       )}
